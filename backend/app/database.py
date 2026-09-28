@@ -1,14 +1,43 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import text
+from sqlalchemy.pool import NullPool
 from app.config import get_settings
 import logging
 from typing import Any, Dict, Tuple
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+
+def uses_transaction_pooler(url: str) -> bool:
+    """Whether this URL points at a PgBouncer-style *transaction* pooler.
+
+    Supabase exposes three connection strings and only one of them is safe to use
+    unchanged:
+
+    * **Direct** — `db.<ref>.supabase.co:5432`. Resolves to IPv6 only on current
+      free projects, and Render does not provide outbound IPv6, so it times out
+      with no useful error.
+    * **Session pooler** — `<region>.pooler.supabase.com:5432`. IPv4, one server
+      connection per client session, so prepared statements behave normally. This
+      is the one to use.
+    * **Transaction pooler** — `<region>.pooler.supabase.com:6543`. IPv4, but a
+      server connection is handed to a different client between statements.
+      asyncpg prepares every statement server-side and names them in numeric
+      order, so names collide across clients and queries fail with
+      `DuplicatePreparedStatementError` / `InvalidSQLStatementNameError`.
+
+    Detected by port 6543, which is Supabase's dedicated transaction-mode port.
+    """
+    try:
+        port = urlsplit(url).port
+    except ValueError:
+        return False
+    return port == 6543
 
 
 def normalise_database_url(raw: str) -> Tuple[str, Dict[str, Any]]:
@@ -24,8 +53,13 @@ def normalise_database_url(raw: str) -> Tuple[str, Dict[str, Any]]:
     * Render's external URL carries `?sslmode=require`. That is a libpq parameter;
       asyncpg does not accept it and fails with `connect() got an unexpected
       keyword argument 'sslmode'`. asyncpg expresses the same thing as `ssl`.
+    * Supabase requires TLS but its copied connection strings often omit
+      `sslmode`, so TLS is enabled for `*.supabase.co` / `*.supabase.com` even
+      when the URL does not ask for it.
+    * Supabase's transaction pooler cannot serve asyncpg's server-side prepared
+      statements; see `uses_transaction_pooler`.
 
-    Normalising here means `DATABASE_URL` can be pasted verbatim from the Render
+    Normalising here means `DATABASE_URL` can be pasted verbatim from either
     dashboard, which is what anyone deploying this will actually do.
     """
     url = (raw or "").strip()
@@ -50,11 +84,20 @@ def normalise_database_url(raw: str) -> Tuple[str, Dict[str, Any]]:
     for key, value in parse_qsl(split.query, keep_blank_values=True):
         lowered = key.lower()
         if lowered == "sslmode":
-            # require/verify-ca/verify-full all mean "use TLS". asyncpg validates
-            # certificates through an SSLContext; `True` uses the system trust store,
-            # which is what Render's managed certificates chain to.
-            if value.lower() not in ("disable", "allow", "prefer"):
-                connect_args["ssl"] = True
+            # Pass libpq's own mode through rather than collapsing it to a boolean.
+            # asyncpg accepts these spellings and applies the same semantics, and the
+            # distinction is not cosmetic: `require` means "encrypt, do not verify
+            # the certificate", whereas asyncpg's `ssl=True` also verifies it.
+            # Translating require -> True was therefore stricter than the URL asked
+            # for, and it failed against Supabase's pooler with
+            # `CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate
+            # chain` — a connection the provider considers correctly configured.
+            mode = value.lower().strip()
+            if mode in ("require", "verify-ca", "verify-full"):
+                connect_args["ssl"] = mode
+            elif mode == "prefer":
+                connect_args["ssl"] = "prefer"
+            # disable / allow: leave TLS unrequested.
             continue
         if lowered in ("channel_binding", "target_session_attrs", "gssencmode"):
             continue
@@ -63,6 +106,29 @@ def normalise_database_url(raw: str) -> Tuple[str, Dict[str, Any]]:
     url = urlunsplit(
         (split.scheme, split.netloc, split.path, urlencode(kept), split.fragment)
     )
+
+    host = (split.hostname or "").lower()
+    if host.endswith(".supabase.co") or host.endswith(".supabase.com"):
+        # Supabase mandates TLS, but the strings it offers for copying usually omit
+        # sslmode. `require` and not `verify-full`: the pooler presents a chain that
+        # Python's default trust store rejects as self-signed, so verification fails
+        # on a correctly provisioned database. Encrypted-without-verification is what
+        # Supabase's own documented connection strings ask for.
+        connect_args.setdefault("ssl", "require")
+
+    if uses_transaction_pooler(url):
+        # asyncpg prepares every statement server-side and, by default, names them
+        # in numeric order (__asyncpg_stmt_1__, _2_, ...). In transaction pooling a
+        # server connection moves between clients mid-session, so those names
+        # collide and statements fail with DuplicatePreparedStatementError. Fixed by
+        # disabling both statement caches and generating a unique name per prepare.
+        # `poolclass=NullPool` is applied alongside these — see the engine setup.
+        connect_args.setdefault("prepared_statement_cache_size", 0)
+        connect_args.setdefault("statement_cache_size", 0)
+        connect_args.setdefault(
+            "prepared_statement_name_func", lambda: f"__predictops_{uuid4().hex}__"
+        )
+
     return url, connect_args
 
 
@@ -77,6 +143,10 @@ def sync_database_url(raw: str = None) -> str:
     run as standalone scripts, so they cannot use the async engine. Previously
     `train.py` derived this with a bare `.replace("+aiosqlite", "")`, which silently
     produced an unusable URL for anything that was not SQLite.
+
+    psycopg2 needs no transaction-pooler workaround: it does not create server-side
+    named prepared statements by default, which is the thing that breaks asyncpg
+    behind PgBouncer. It does still need libpq's `sslmode` spelling.
     """
     url, connect_args = normalise_database_url(
         raw if raw is not None else settings.database_url
@@ -92,17 +162,29 @@ def sync_database_url(raw: str = None) -> str:
     return url
 
 
-# `pool_pre_ping` matters on hosted Postgres: Render recycles idle connections and
+# `pool_pre_ping` matters on hosted Postgres: providers recycle idle connections and
 # without it the first request after a quiet spell fails on a dead socket rather
 # than transparently reconnecting. SQLite has no server to disconnect from.
 _engine_kwargs: Dict[str, Any] = {"echo": False}
 if not _is_sqlite:
-    _engine_kwargs.update(
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=5,
-        pool_recycle=280,
-    )
+    if uses_transaction_pooler(db_url):
+        # A transaction pooler already multiplexes connections server-side. Pooling
+        # again here stacks two poolers, and SQLAlchemy would hold connections the
+        # pooler expects to reclaim between statements, so prepared statements and
+        # session state leak across clients. NullPool hands the pooler back its
+        # connection as soon as the request finishes.
+        _engine_kwargs.update(poolclass=NullPool, pool_pre_ping=True)
+        logger.info(
+            "Transaction pooler detected (port 6543): NullPool and prepared-"
+            "statement caching disabled."
+        )
+    else:
+        _engine_kwargs.update(
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=5,
+            pool_recycle=280,
+        )
 if _connect_args:
     _engine_kwargs["connect_args"] = _connect_args
 

@@ -438,8 +438,11 @@ is what authenticates.
 
 ## Deployment: Render and Vercel
 
-Backend and managed Postgres on Render via [`render.yaml`](render.yaml); frontend on
-Vercel via [`frontend/vercel.json`](frontend/vercel.json).
+Backend on Render via [`render.yaml`](render.yaml), database on **Supabase
+Postgres**, frontend on Vercel via [`frontend/vercel.json`](frontend/vercel.json).
+
+Supabase rather than Render's managed Postgres because Render deletes free
+databases after a fixed window, which would take the seeded fleet with it.
 
 ### Prerequisite: this project must be its own Git repository
 
@@ -454,28 +457,68 @@ git remote add origin <your repository url>
 git push -u origin main
 ```
 
+### Database: which Supabase connection string
+
+Supabase offers three, and only one is a clean fit:
+
+| String | Host / port | Use it? |
+|---|---|---|
+| Direct connection | `db.<ref>.supabase.co:5432` | **No** — IPv6-only on current free projects, and Render has no outbound IPv6, so it times out with no useful error |
+| **Session pooler** | `aws-0-<region>.pooler.supabase.com:5432` | **Yes** — IPv4, one server connection per session, prepared statements behave normally |
+| Transaction pooler | `aws-0-<region>.pooler.supabase.com:6543` | Works, but needs a workaround — see below |
+
+Percent-encode the password if it contains `@ : / ? # &`.
+
+The app handles the transaction pooler if you use it: port 6543 is detected and
+asyncpg's prepared-statement caches are disabled with a unique name generator, plus
+`NullPool` so the pooler can reclaim connections. Without that, a server connection
+moves between clients mid-session and asyncpg's numerically-named prepared statements
+collide, failing with `DuplicatePreparedStatementError`.
+
+TLS is enabled automatically for `*.supabase.co` / `*.supabase.com` as
+`sslmode=require` — encrypt without certificate verification. Supabase's pooler
+presents a chain Python's default trust store rejects as self-signed, so full
+verification fails on a correctly provisioned database.
+
+### Seed the database once
+
+Supabase persists, so this is a one-time job you run from your own machine:
+
+```powershell
+cd backend
+$env:DATABASE_URL = "<your Supabase session-pooler URL>"
+python ..\data\generate_synthetic_data.py   # 20 machines, 43,200 readings, ERP data
+python ..\data\seed_demo.py                 # the M-102 scenario
+Remove-Item Env:\DATABASE_URL
+```
+
+Render will then boot with `seed: skipped`, so first-boot seeding costs nothing. If
+you skip this, the app seeds itself on first boot as a background task instead.
+
 ### Render
 
-Dashboard → **New → Blueprint** → point at the repository. `render.yaml` declares the
-web service and a Postgres instance, and sets every environment variable except two
-you must enter yourself (they are marked `sync: false`):
+1. Dashboard → **New → Blueprint** → select the repository
+2. Render reads `render.yaml` and declares one web service, `predictops-api`
+3. Enter the three dashboard-only variables:
 
 | Variable | Value |
 |---|---|
+| `DATABASE_URL` | your Supabase session-pooler URL |
 | `DEMO_PASSWORD` | your choice — judges sign in with it |
-| `GEMINI_API_KEY` | your key |
-| `CORS_ALLOWED_ORIGINS` | **edit in `render.yaml`** to your real Vercel origin |
+| `GEMINI_API_KEY` | your Gemini key |
+
+4. Edit `CORS_ALLOWED_ORIGINS` in `render.yaml` to your real Vercel origin
+
+Everything else is pinned: `ENVIRONMENT=production`, `AUTH_ENABLED=true`,
+`DEMO_MODE=false`, `TRUSTED_PROXY_HOPS=1`, `LLM_PROVIDER=gemini`, and `SECRET_KEY`
+generated once by Render.
 
 The build trains the model against a **throwaway SQLite file**, not the live
-database. Three reasons: `model.joblib` is deliberately gitignored because a pickle
-should be rebuilt from source rather than trusted from a repository; Render's build
-output becomes the running instance's filesystem, so the artefact is present at
-runtime without committing it; and it removes any dependency on the database being
-reachable at build time.
-
-Application data is seeded separately, into Postgres, **on first boot** — as a
-background task, because it inserts 43,200 readings row-by-row and would otherwise
-trip the health check. Watch `GET /api/health` → `seed` and `machines`.
+database: `model.joblib` is deliberately gitignored because a pickle should be
+rebuilt from source rather than trusted from a repository, Render's build output
+becomes the running instance's filesystem so the artefact is present at runtime
+without committing it, and it removes any dependency on the database being reachable
+at build time.
 
 ### Vercel
 
@@ -486,11 +529,10 @@ own origin, which only works behind the local dev proxy.
 
 ### What changes on a deployment, and why
 
-- **Postgres URL rewriting.** Render emits `postgres://…?sslmode=require`, which
-  fails three separate ways: SQLAlchemy 2.0 removed the `postgres` alias, a bare
-  `postgresql://` selects the synchronous psycopg2 driver, and `sslmode` is a libpq
-  parameter that asyncpg rejects outright. `normalise_database_url` handles all
-  three, so the connection string can be pasted verbatim.
+- **Postgres URL rewriting.** Providers emit strings that fail three separate ways:
+  SQLAlchemy 2.0 removed the `postgres://` alias, a bare `postgresql://` selects the
+  synchronous psycopg2 driver, and `sslmode` is a libpq parameter asyncpg rejects.
+  `normalise_database_url` handles all three, so the string can be pasted verbatim.
 - **Schema creation is dialect-gated.** `init_db` carries a SQLite-only migration
   shim (`PRAGMA`, `sqlite_master`, table rebuild) for databases created by earlier
   versions. On Postgres it returns early — `create_all` builds the current schema
@@ -507,14 +549,14 @@ own origin, which only works behind the local dev proxy.
 
 ### Known constraints
 
-- Render's free Postgres expires after a fixed window — move to a paid plan before a
-  demo you cannot afford to lose.
 - Gemini's free tier is ~20 requests/day; past that every answer is the deterministic
   template.
 - **Single instance only.** The answer cache, rate-limit windows, SSE subscriber set
   and live-feed loop are all in-process.
-- Free instances spin down when idle, which stops the live feed until the next
+- Free Render instances spin down when idle, which stops the live feed until the next
   request wakes them.
+- Local development stays on SQLite. Pointing `backend/.env` at Supabase works but
+  every query then crosses the network.
 
 ---
 
@@ -526,7 +568,7 @@ cd backend
 python -m pytest -q
 ```
 
-**329 tests.** The suite forces `LLM_PROVIDER=none`, so it never calls a language
+**338 tests.** The suite forces `LLM_PROVIDER=none`, so it never calls a language
 model: real Cortex and Gemini requests made tests slow (measured 70–127 s),
 non-deterministic, and able to fail because a quota was exhausted rather than because
 the code was wrong. Tests that exercise the LLM path stub the provider and assert on
@@ -544,7 +586,7 @@ Coverage by area:
 | Security | Secret-key resolution, rate limiting, body caps, webhook validation, prompt fencing |
 | Auth | 401/403 gating per role, audit writes |
 | LLM provider | Selection order, the browser-auth token-cache guard, the priming command |
-| Deployment | Postgres URL normalisation, proxy-aware client identity, demo-password realignment |
+| Deployment | Postgres URL normalisation, Supabase pooler detection and TLS mode, proxy-aware client identity, demo-password realignment |
 
 ```powershell
 python -m app.ml.train        # retrain and regenerate the model report
@@ -603,7 +645,7 @@ Stated plainly, because a judge will find these anyway.
 |---|---|
 | Frontend | React 19, Vite 8, TypeScript 6, Tailwind CSS 4, Recharts 3, react-router 7 |
 | Backend | Python 3.13, FastAPI, SQLAlchemy 2.0 (async) |
-| Database | SQLite + aiosqlite (dev) · PostgreSQL + asyncpg (deployed) |
+| Database | SQLite + aiosqlite (dev) · PostgreSQL + asyncpg (deployed, Supabase) |
 | ML | scikit-learn — GradientBoostingClassifier, 7-day failure horizon |
 | AI phrasing | Snowflake Cortex (`claude-sonnet-4-5`) → Gemini → deterministic template |
 | Auth | PBKDF2-HMAC-SHA256 + HMAC-signed tokens, standard library only |

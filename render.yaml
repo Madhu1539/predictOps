@@ -1,16 +1,11 @@
 # Render Blueprint — https://render.com/docs/blueprint-spec
 #
-# Deploys the FastAPI backend and a managed Postgres database. The frontend is a
-# static Vite build and is deployed separately on Vercel (see vercel.json).
+# Deploys the FastAPI backend only. The database is an external Supabase Postgres
+# instance, not a Render-managed one: Render's free Postgres is deleted after a
+# fixed window, which would take the seeded fleet with it. The frontend is a static
+# Vite build deployed separately on Vercel (see frontend/vercel.json).
 #
 # Apply with: Render Dashboard -> New -> Blueprint -> point at this repository.
-
-databases:
-  - name: predictops-db
-    databaseName: predictops
-    plan: free
-    # Render's free Postgres expires after a fixed window. Move to a paid plan
-    # before a demo you cannot afford to lose.
 
 services:
   - type: web
@@ -43,10 +38,23 @@ services:
     startCommand: cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
     envVars:
+      # Supabase connection string, set in the dashboard — never in the repo.
+      #
+      # Use the SESSION POOLER string (port 5432 on *.pooler.supabase.com), which
+      # is what Supabase labels "Session pooler":
+      #   postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+      #
+      # Not the other two:
+      #   - "Direct connection" (db.<ref>.supabase.co) resolves to IPv6 only on
+      #     current free projects, and Render has no outbound IPv6, so it times out.
+      #   - "Transaction pooler" (port 6543) hands a server connection to a
+      #     different client between statements, which breaks asyncpg's server-side
+      #     prepared statements. The app detects port 6543 and disables prepared
+      #     statement caching so it still works, but session mode is simpler.
+      #
+      # Percent-encode the password if it contains @ : / ? # or &.
       - key: DATABASE_URL
-        fromDatabase:
-          name: predictops-db
-          property: connectionString
+        sync: false
 
       - key: ENVIRONMENT
         value: production

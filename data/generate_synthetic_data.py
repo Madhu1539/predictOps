@@ -13,7 +13,7 @@ os.chdir(BACKEND_DIR)  # Change to backend/ so relative DB path works
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, insert
 from sqlalchemy.orm import Session
 
 # We use synchronous engine here for data generation
@@ -361,6 +361,7 @@ def generate_and_seed():
 
         # ── Machines + Sensor Data + Maintenance ─────────────────────────────
         order_seq = 0
+        pending_readings: list[dict] = []
         for machine_def in MACHINES:
             m = Machine(
                 name=machine_def["name"],
@@ -401,10 +402,16 @@ def generate_and_seed():
                     status=status,
                 ))
 
-            # Generate sensor readings
+            # Generate sensor readings.
+            #
+            # Collected as plain dicts and inserted through SQLAlchemy Core below
+            # rather than as 43,200 ORM objects. The ORM path asks for generated
+            # primary keys back and tracks every instance in the identity map, which
+            # is wasted work for write-once rows: against a hosted database in
+            # another region it did not finish within 25 minutes, because the cost is
+            # dominated by network round trips rather than by the inserts.
             readings = _generate_machine_sensor_data(machine_def, start_date)
-            for r in readings:
-                session.add(SensorReading(machine_id=m.id, **r))
+            pending_readings.extend({"machine_id": m.id, **r} for r in readings)
 
             # Generate maintenance records
             maint_list = MAINTENANCE_HISTORY.get(machine_def["name"], [])
@@ -421,6 +428,13 @@ def generate_and_seed():
 
             readings_count = len(readings)
             print(f"  [OK] {machine_def['name']}: {readings_count} readings | criticality={machine_def['criticality']} | scenario={FAILURE_SCENARIOS.get(machine_def['name'], ('None',))[0]}")
+
+        # One Core insert for every sensor reading. SQLAlchemy batches the list into
+        # multi-row INSERT statements, so this is a handful of round trips instead of
+        # tens of thousands.
+        if pending_readings:
+            print(f"  ... inserting {len(pending_readings):,} sensor readings")
+            session.execute(insert(SensorReading), pending_readings)
 
         session.commit()
 

@@ -12,7 +12,12 @@ import pytest_asyncio
 from starlette.datastructures import Headers
 
 from app.config import Settings
-from app.database import init_db, normalise_database_url, sync_database_url
+from app.database import (
+    init_db,
+    normalise_database_url,
+    sync_database_url,
+    uses_transaction_pooler,
+)
 
 
 # ─── Database URL normalisation ───────────────────────────────────────────────
@@ -36,17 +41,93 @@ def test_postgres_urls_resolve_to_the_async_driver(raw, expected_scheme):
 
 def test_sslmode_is_translated_for_asyncpg():
     """`?sslmode=require` is a libpq parameter. asyncpg rejects it outright, so it
-    has to move into connect_args as `ssl`."""
+    has to move into connect_args — but as the libpq *mode*, not a boolean.
+
+    `ssl=True` in asyncpg means encrypt AND verify the certificate, whereas libpq's
+    `require` means encrypt only. Collapsing require -> True was stricter than the
+    URL asked for and failed against a live Supabase pooler with
+    `CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate chain`.
+    """
     url, connect_args = normalise_database_url(
         "postgres://u:p@dpg-x.oregon-postgres.render.com/db?sslmode=require"
     )
     assert "sslmode" not in url
-    assert connect_args == {"ssl": True}
+    assert connect_args == {"ssl": "require"}
+
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    [
+        ("require", "require"),
+        ("verify-ca", "verify-ca"),
+        ("verify-full", "verify-full"),
+        ("prefer", "prefer"),
+    ],
+)
+def test_stricter_ssl_modes_are_preserved(mode, expected):
+    """Verification must not be silently downgraded either."""
+    _, connect_args = normalise_database_url(f"postgres://u:p@host/db?sslmode={mode}")
+    assert connect_args["ssl"] == expected
 
 
 def test_sslmode_disable_does_not_request_tls():
     _, connect_args = normalise_database_url("postgres://u:p@host/db?sslmode=disable")
     assert "ssl" not in connect_args
+
+
+# ─── Supabase ─────────────────────────────────────────────────────────────────
+
+SUPABASE_SESSION = (
+    "postgresql://postgres.abcdefgh:pw@aws-0-ap-northeast-2.pooler.supabase.com"
+    ":5432/postgres"
+)
+SUPABASE_TRANSACTION = (
+    "postgresql://postgres.abcdefgh:pw@aws-0-ap-northeast-2.pooler.supabase.com"
+    ":6543/postgres"
+)
+
+
+def test_supabase_gets_tls_even_without_sslmode():
+    """Supabase mandates TLS but the strings it offers for copying omit sslmode.
+    `require` rather than verification, because the pooler presents a chain Python's
+    default trust store rejects as self-signed."""
+    _, connect_args = normalise_database_url(SUPABASE_SESSION)
+    assert connect_args["ssl"] == "require"
+
+
+def test_session_pooler_is_not_treated_as_a_transaction_pooler():
+    """Port 5432 on the pooler host is session mode: one server connection per
+    client session, so prepared statements behave normally."""
+    url, connect_args = normalise_database_url(SUPABASE_SESSION)
+    assert uses_transaction_pooler(url) is False
+    assert "prepared_statement_cache_size" not in connect_args
+
+
+def test_transaction_pooler_disables_prepared_statements():
+    """Port 6543 hands a server connection to a different client between statements.
+    asyncpg names prepared statements in numeric order, so without this the names
+    collide across clients and queries fail with DuplicatePreparedStatementError."""
+    url, connect_args = normalise_database_url(SUPABASE_TRANSACTION)
+    assert uses_transaction_pooler(url) is True
+    assert connect_args["prepared_statement_cache_size"] == 0
+    assert connect_args["statement_cache_size"] == 0
+    assert callable(connect_args["prepared_statement_name_func"])
+
+
+def test_transaction_pooler_statement_names_are_unique():
+    """Colliding names are the failure being prevented, so the generator must not
+    return the same name twice."""
+    _, connect_args = normalise_database_url(SUPABASE_TRANSACTION)
+    make_name = connect_args["prepared_statement_name_func"]
+    names = {make_name() for _ in range(200)}
+    assert len(names) == 200
+
+
+def test_supabase_sync_url_keeps_sslmode_for_psycopg2():
+    """The seeder and trainer go through psycopg2, which needs libpq's spelling."""
+    sync = sync_database_url(SUPABASE_SESSION)
+    assert sync.startswith("postgresql+psycopg2://")
+    assert "sslmode=require" in sync
 
 
 def test_libpq_only_parameters_are_dropped():
