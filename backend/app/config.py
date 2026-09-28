@@ -100,8 +100,17 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> List[str]:
         """Parsed CORS allowlist. A wildcard outside development is downgraded to
-        the named defaults rather than silently trusted."""
-        raw = [o.strip() for o in (self.cors_allowed_origins or "").split(",")]
+        the named defaults rather than silently trusted.
+
+        Trailing slashes are stripped. An `Origin` header is scheme, host and port
+        only — never a path — so `https://site.example/` cannot match any request a
+        browser will ever send. Configuring it that way produced a deployment that
+        looked correct in the dashboard while every preflight was answered with
+        400 "Disallowed CORS origin", and the frontend reported only "Unable to
+        connect". Since the trailing form can never be valid, normalising it is
+        always the intended reading rather than a guess.
+        """
+        raw = [o.strip().rstrip("/") for o in (self.cors_allowed_origins or "").split(",")]
         origins = [o for o in raw if o]
         if "*" in origins and not self.is_development:
             return ["http://localhost:5173", "http://127.0.0.1:5173"]

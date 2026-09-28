@@ -216,6 +216,38 @@ def test_missing_header_falls_back_to_the_peer(monkeypatch):
     assert _client_key_with_hops(_FakeRequest("10.0.0.1"), 1, monkeypatch) == "10.0.0.1"
 
 
+# ─── CORS allowlist normalisation ─────────────────────────────────────────────
+
+def test_trailing_slash_is_stripped_from_allowed_origins():
+    """A browser's Origin header is scheme+host+port with no path, so an entry ending
+    in `/` can never match. Observed on a live deployment: the dashboard showed the
+    right site but every preflight returned 400 "Disallowed CORS origin"."""
+    s = Settings(cors_allowed_origins="https://predict-ops-six.vercel.app/")
+    assert s.allowed_origins == ["https://predict-ops-six.vercel.app"]
+
+
+def test_multiple_origins_are_each_normalised():
+    s = Settings(
+        cors_allowed_origins=
+        " https://a.vercel.app/ , https://b.vercel.app ,, http://localhost:5173/ "
+    )
+    assert s.allowed_origins == [
+        "https://a.vercel.app",
+        "https://b.vercel.app",
+        "http://localhost:5173",
+    ]
+
+
+def test_wildcard_is_still_downgraded_outside_development():
+    """Normalising must not weaken the existing wildcard guard."""
+    s = Settings(cors_allowed_origins="*", environment="production")
+    assert s.allowed_origins == ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
+def test_empty_allowlist_falls_back_to_the_dev_origin():
+    assert Settings(cors_allowed_origins="").allowed_origins == ["http://localhost:5173"]
+
+
 # ─── Demo account password alignment ─────────────────────────────────────────
 
 @pytest_asyncio.fixture
