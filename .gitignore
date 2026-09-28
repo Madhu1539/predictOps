@@ -1,0 +1,62 @@
+# ─── Secrets ──────────────────────────────────────────────────────────────────
+# Never commit real configuration. `.env.example` is the documented template and
+# is deliberately the only env file tracked.
+.env
+*.env
+!.env.example
+backend/.env
+frontend/.env
+backend/.secret_key
+# Snowflake OAuth/MFA token cache, if it is ever placed inside the tree.
+**/predictops_token_cache/
+*.pem
+*.key
+*.p8
+
+# ─── Data and model artefacts ─────────────────────────────────────────────────
+# The database carries ingested plant data; the model is a pickle and must be
+# rebuilt from source rather than trusted from a repository.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.joblib
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ─── Node / frontend ──────────────────────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# ─── Editors and OS ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ─── Agent / tooling workspace ────────────────────────────────────────────────
+# Cortex Code's local workspace: session plans and conversation state. Working
+# notes about how the project was built, not part of the project.
+.snowflake/
+.cortexcode/
+.claude/
+.cursor/
+
+# ─── Internal specification ───────────────────────────────────────────────────
+# Kept local at the author's request. README.md is the public documentation.
+spec.md

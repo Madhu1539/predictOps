@@ -1,0 +1,85 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Deploys the FastAPI backend and a managed Postgres database. The frontend is a
+# static Vite build and is deployed separately on Vercel (see vercel.json).
+#
+# Apply with: Render Dashboard -> New -> Blueprint -> point at this repository.
+
+databases:
+  - name: predictops-db
+    databaseName: predictops
+    plan: free
+    # Render's free Postgres expires after a fixed window. Move to a paid plan
+    # before a demo you cannot afford to lose.
+
+services:
+  - type: web
+    name: predictops-api
+    runtime: python
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+
+    # The model is trained during the build, against a throwaway SQLite file
+    # rather than the live database. Three reasons:
+    #   1. model.joblib is deliberately gitignored — a pickle must be rebuilt from
+    #      source, not trusted from a repository.
+    #   2. Build output becomes the running instance's filesystem on Render, so
+    #      the artefact is present at runtime without committing it.
+    #   3. It removes any dependency on the database being reachable at build
+    #      time, and guarantees the training set is the documented synthetic
+    #      distribution rather than whatever the live database happens to hold.
+    # Application data is seeded separately, into Postgres, on first boot.
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r backend/requirements.txt
+      cd backend
+      DATABASE_URL=sqlite:///./build_train.db python ../data/generate_synthetic_data.py
+      DATABASE_URL=sqlite:///./build_train.db python -m app.ml.train
+      rm -f build_train.db
+
+    # Must bind 0.0.0.0 and Render's injected $PORT. The app's own defaults are
+    # loopback:8000 on purpose, so they cannot be reused here.
+    startCommand: cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: predictops-db
+          property: connectionString
+
+      - key: ENVIRONMENT
+        value: production
+
+      # The startup guard refuses to boot a non-development environment with the
+      # mutation surface open, a placeholder signing key, or shared demo accounts.
+      - key: AUTH_ENABLED
+        value: "true"
+      - key: DEMO_MODE
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true          # Render generates and stores this once.
+      - key: DEMO_PASSWORD
+        sync: false                  # Set in the dashboard; never in the repo.
+
+      # Render terminates TLS at one proxy which appends to X-Forwarded-For.
+      # Without this every visitor shares a single rate-limit bucket.
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+
+      # Snowflake Cortex reads credentials from ~/.snowflake/connections.toml,
+      # which cannot exist here, so Cortex is unavailable on Render by design.
+      # Gemini is the only reachable provider; pinning the value makes that
+      # explicit instead of letting "auto" fail over silently.
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false                  # Set in the dashboard.
+
+      # Replace with the real Vercel origin once known, then redeploy. A wildcard
+      # is downgraded to localhost outside development, so it will not work here.
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://predictops.vercel.app
+
+      - key: PYTHON_VERSION
+        value: "3.13.1"

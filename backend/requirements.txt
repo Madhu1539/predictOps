@@ -1,0 +1,43 @@
+greenlet>=3.0.0
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+sqlalchemy==2.0.36
+aiosqlite==0.20.0
+# Async Postgres driver, used when DATABASE_URL points at a hosted database
+# (Render, Neon, Supabase). SQLite remains the default for local development, so
+# both drivers ship. `app.database.normalise_database_url` rewrites the legacy
+# `postgres://` scheme Render emits and moves `sslmode` into asyncpg's `ssl`
+# argument, neither of which asyncpg accepts as given.
+asyncpg>=0.30.0
+# Synchronous Postgres driver. Needed because the data generators and the model
+# trainer are standalone synchronous SQLAlchemy scripts and cannot share the
+# application's async engine. `-binary` ships a wheel, so no local libpq or
+# compiler is required on the build host.
+psycopg2-binary>=2.9.9
+pydantic==2.9.2
+pydantic-settings==2.6.0
+pandas>=2.0.0
+numpy>=2.0.0
+scikit-learn>=1.5.0
+joblib>=1.4.0
+python-dotenv==1.0.1
+httpx==0.27.0
+google-generativeai>=0.8.0
+# Snowflake Cortex is the preferred LLM provider. The Gemini free tier allows only
+# 20 requests per day (GenerateRequestsPerDayPerProjectPerModel-FreeTier), which is
+# reached in ordinary development use and silently forces every answer onto the
+# deterministic template.
+#
+# Deliberately NOT `snowflake-connector-python[secure-local-storage]`, despite the
+# connector's own warning recommending it. That extra installs keyring, and keyring
+# cannot hold a Snowflake OAuth token on Windows: CredWrite caps a credential blob at
+# 2560 bytes and encodes it as UTF-16, so the ~1.6 KB token exceeds the cap once
+# encoded and the write raises
+# (1783, 'CredWrite', 'The stub received bad data') out of connect() — so installing
+# it makes Cortex unreachable rather than persistent. app/llm/llm_client.py forces the
+# connector's own FileTokenCache instead, which needs no extra and works on every
+# platform. Verified with keyring absent.
+snowflake-connector-python>=3.12
+alembic==1.13.3
+pytest>=8.0.0
+pytest-asyncio>=0.24.0

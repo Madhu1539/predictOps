@@ -1,0 +1,338 @@
+{
+  "selected_model": "Gradient Boosting",
+  "selection_rule": "Highest recall among models with precision >= 0.25 (spec \u00a722 prioritises recall). The spec \u00a721 default 'Gradient Boosting' is only displaced when another model leads recall by more than 0.03 AND does not have a worse F1, since trading a large precision loss for a marginal recall gain is not 'clearly better'. Probability calibration is offered as a candidate but is rejected when it costs recall.",
+  "feature_columns": [
+    "vibration",
+    "temperature",
+    "rpm",
+    "vibration_mean",
+    "vibration_std",
+    "vibration_slope",
+    "temperature_mean",
+    "temperature_std",
+    "temperature_slope",
+    "rpm_mean",
+    "rpm_std",
+    "rpm_slope",
+    "days_since_last_maintenance",
+    "maintenance_count",
+    "previous_failure_count",
+    "machine_age_days",
+    "criticality_encoded",
+    "machine_type_CNC Machine",
+    "machine_type_Conveyor Motor",
+    "machine_type_Hydraulic Press",
+    "machine_type_Industrial Pump",
+    "recent_downtime",
+    "production_count",
+    "machine_availability"
+  ],
+  "train_samples": 36020,
+  "test_samples": 7180,
+  "train_failure_rate": 0.010660744031093837,
+  "test_failure_rate": 0.09972144846796657,
+  "results": {
+    "Logistic Regression": {
+      "precision": 0.2985,
+      "recall": 0.5978,
+      "f1": 0.3981,
+      "roc_auc": 0.8826,
+      "brier_score": 0.1673,
+      "saturated_fraction": 0.1057,
+      "confusion_matrix": {
+        "true_negatives": 5458,
+        "false_positives": 1006,
+        "false_negatives": 288,
+        "true_positives": 428
+      }
+    },
+    "Random Forest": {
+      "precision": 0.339,
+      "recall": 0.1676,
+      "f1": 0.2243,
+      "roc_auc": 0.8932,
+      "brier_score": 0.0895,
+      "saturated_fraction": 0.0,
+      "confusion_matrix": {
+        "true_negatives": 6230,
+        "false_positives": 234,
+        "false_negatives": 596,
+        "true_positives": 120
+      }
+    },
+    "Gradient Boosting": {
+      "precision": 0.5115,
+      "recall": 0.5587,
+      "f1": 0.534,
+      "roc_auc": 0.8368,
+      "brier_score": 0.0963,
+      "saturated_fraction": 0.0579,
+      "confusion_matrix": {
+        "true_negatives": 6082,
+        "false_positives": 382,
+        "false_negatives": 316,
+        "true_positives": 400
+      }
+    },
+    "Logistic Regression (calibrated)": {
+      "precision": 0.9192,
+      "recall": 0.1271,
+      "f1": 0.2233,
+      "roc_auc": 0.8855,
+      "brier_score": 0.0761,
+      "saturated_fraction": 0.0,
+      "confusion_matrix": {
+        "true_negatives": 6456,
+        "false_positives": 8,
+        "false_negatives": 625,
+        "true_positives": 91
+      }
+    }
+  },
+  "global_importance": [
+    {
+      "feature": "temperature_mean",
+      "label": "Temperature (24h mean)",
+      "weight": 0.71684,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "recent_downtime",
+      "label": "Recent downtime",
+      "weight": 0.17416,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "days_since_last_maintenance",
+      "label": "Days since last maintenance",
+      "weight": 0.04296,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "rpm_std",
+      "label": "RPM instability",
+      "weight": 0.02645,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "machine_type_Conveyor Motor",
+      "label": "Machine type: Conveyor Motor",
+      "weight": 0.0123,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "vibration_slope",
+      "label": "Vibration trend",
+      "weight": 0.00766,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "previous_failure_count",
+      "label": "Previous failures",
+      "weight": 0.00705,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "temperature",
+      "label": "Temperature",
+      "weight": 0.00609,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "vibration_mean",
+      "label": "Vibration (24h mean)",
+      "weight": 0.00389,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "machine_age_days",
+      "label": "Machine age",
+      "weight": 0.00162,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "vibration_std",
+      "label": "Vibration variability",
+      "weight": 0.00089,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "rpm_mean",
+      "label": "RPM (24h mean)",
+      "weight": 6e-05,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "maintenance_count",
+      "label": "Maintenance history depth",
+      "weight": 3e-05,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "vibration",
+      "label": "Vibration",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "rpm",
+      "label": "RPM",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "temperature_std",
+      "label": "Temperature variability",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "temperature_slope",
+      "label": "Temperature trend",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "rpm_slope",
+      "label": "RPM trend",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "criticality_encoded",
+      "label": "Machine criticality",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "machine_type_CNC Machine",
+      "label": "Machine type: CNC Machine",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "machine_type_Hydraulic Press",
+      "label": "Machine type: Hydraulic Press",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "machine_type_Industrial Pump",
+      "label": "Machine type: Industrial Pump",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "production_count",
+      "label": "Production volume",
+      "weight": 0.0,
+      "method": "tree_importance"
+    },
+    {
+      "feature": "machine_availability",
+      "label": "Availability",
+      "weight": 0.0,
+      "method": "tree_importance"
+    }
+  ],
+  "feature_ranges": {
+    "vibration": {
+      "min": 1.116,
+      "max": 5.071
+    },
+    "temperature": {
+      "min": 49.48,
+      "max": 95.21
+    },
+    "rpm": {
+      "min": 752.6,
+      "max": 1572.3
+    },
+    "vibration_mean": {
+      "min": 1.2604583333333335,
+      "max": 4.806708333333334
+    },
+    "vibration_std": {
+      "min": 0.0,
+      "max": 0.22424094184604235
+    },
+    "vibration_slope": {
+      "min": -0.19400000000000026,
+      "max": 0.2639999999999998
+    },
+    "temperature_mean": {
+      "min": 51.50541666666667,
+      "max": 93.13375
+    },
+    "temperature_std": {
+      "min": 0.0,
+      "max": 2.3455134476982518
+    },
+    "temperature_slope": {
+      "min": -3.1400000000000032,
+      "max": 2.479999999999994
+    },
+    "rpm_mean": {
+      "min": 775.8888888888889,
+      "max": 1532.9041666666665
+    },
+    "rpm_std": {
+      "min": 0.0,
+      "max": 54.16985564748728
+    },
+    "rpm_slope": {
+      "min": -32.80000000000014,
+      "max": 26.69999999999991
+    },
+    "days_since_last_maintenance": {
+      "min": 0.0,
+      "max": 61.0
+    },
+    "maintenance_count": {
+      "min": 0.0,
+      "max": 3.0
+    },
+    "previous_failure_count": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "machine_age_days": {
+      "min": 1413.0,
+      "max": 3923.0
+    },
+    "criticality_encoded": {
+      "min": 0.0,
+      "max": 2.0
+    },
+    "machine_type_CNC Machine": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "machine_type_Conveyor Motor": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "machine_type_Hydraulic Press": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "machine_type_Industrial Pump": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "recent_downtime": {
+      "min": 0.0,
+      "max": 218.2
+    },
+    "production_count": {
+      "min": 10.0,
+      "max": 719.0
+    },
+    "machine_availability": {
+      "min": 0.015000000000000001,
+      "max": 1.0
+    }
+  },
+  "trained_at": "2026-09-13T18:34:21.246845",
+  "note": "Trained on synthetic data. Metrics demonstrate workflow, not real factory performance."
+}
