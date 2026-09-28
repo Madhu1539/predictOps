@@ -216,9 +216,14 @@ async def health_check():
 
     # Report whether the ML model is loadable. If it is not, scoring falls back
     # to the rules-based estimate and the system is running degraded.
+    #
+    # `get_model` and not `load_model`: the latter re-reads and deserialises the
+    # artefact on every call. A platform health check runs every few seconds, so
+    # that reloaded a 240 KB pickle thousands of times a day and filled the log
+    # with "Model loaded from ..." on a free instance with little CPU to spare.
     try:
-        from app.ml.predict import load_model
-        load_model()
+        from app.ml.predict import get_model
+        get_model()
         ml_status = "loaded"
     except Exception:
         ml_status = "unavailable"

@@ -84,10 +84,17 @@ services:
       - key: GEMINI_API_KEY
         sync: false                  # Set in the dashboard.
 
-      # Replace with the real Vercel origin once known, then redeploy. A wildcard
-      # is downgraded to localhost outside development, so it will not work here.
+      # The exact Vercel origin. A browser preflight from any other origin is
+      # answered with 400 "Disallowed CORS origin", which surfaces in the frontend
+      # as "Unable to connect to PredictOps services" even though the API is
+      # healthy. Scheme included, no trailing slash, no path. Comma-separate to
+      # allow more than one. A wildcard is downgraded to localhost outside
+      # development, so it cannot be used here.
+      #
+      # Vercel also issues a distinct URL per preview deployment; add those
+      # explicitly if you need them to reach the API.
       - key: CORS_ALLOWED_ORIGINS
-        value: https://predictops.vercel.app
+        value: https://predict-ops-six.vercel.app
 
       - key: PYTHON_VERSION
         value: "3.13.1"
