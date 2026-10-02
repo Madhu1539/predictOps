@@ -564,12 +564,19 @@ Two honest caveats:
 - **No SMTP configured means the link is returned in the API response** and shown
   in the UI, labelled as such. That keeps the flow usable on a fresh clone, but it
   also means anyone who submits an address is handed its confirmation link — which
-  defeats verification. Configure `SMTP_HOST` for any real deployment, or turn
-  verification off and accept unverified sign-ups knowingly.
+  defeats verification. **Startup therefore refuses to boot** in a non-development
+  environment with `REGISTRATION_REQUIRE_VERIFICATION=true` and no `SMTP_HOST`:
+  configure SMTP, set verification to `false` knowingly, or disable registration.
 - **This is a shared workspace, not multi-tenancy.** A dataset uploaded by one
   account is visible to every other account on the deployment. The UI says so on
   the sign-up form. Do not raise `REGISTRATION_ROLE` past what you would hand to
   any visitor who can reach that form.
+
+Sign-up is deliberately **enumeration-resistant**, and that takes three things, not
+one. The status code, the response body (same message, same `email_sent` flag) and
+the *time taken* all have to match — so the existing-address branch runs a dummy
+PBKDF2 hash. Creating an account costs ~51 ms of key derivation; returning early
+without paying it made the two cases separable with a stopwatch.
 
 Session tokens carry a `kind` field and verification tokens are minted with
 `kind: "verify"`, which `get_current_user` rejects. Without that separation an
@@ -716,7 +723,7 @@ cd backend
 python -m pytest -q
 ```
 
-**425 tests.** The suite forces `LLM_PROVIDER=none`, so it never calls a language
+**448 tests.** The suite forces `LLM_PROVIDER=none`, so it never calls a language
 model: real Cortex and Gemini requests made tests slow (measured 70–127 s),
 non-deterministic, and able to fail because a quota was exhausted rather than because
 the code was wrong. Tests that exercise the LLM path stub the provider and assert on

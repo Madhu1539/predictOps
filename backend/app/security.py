@@ -130,6 +130,26 @@ def verify_startup_configuration() -> None:
     if settings.demo_mode:
         problems.append("DEMO_MODE=true seeds shared demo accounts")
 
+    # Verification that cannot send mail does not verify anything. With no SMTP
+    # host the registration route returns the confirmation link in its own HTTP
+    # response, so whoever submits an address is handed the means to confirm it —
+    # including an address they do not own. That is an acceptable convenience on
+    # a laptop and indefensible on a public deployment, so the operator has to
+    # choose explicitly rather than inherit it.
+    if (
+        settings.registration_enabled
+        and settings.registration_require_verification
+        and not (settings.smtp_host and settings.smtp_from)
+    ):
+        problems.append(
+            "REGISTRATION_REQUIRE_VERIFICATION=true with no SMTP_HOST/SMTP_FROM "
+            "means the confirmation link is returned in the API response instead "
+            "of being emailed, so anyone can verify an address they do not own. "
+            "Configure SMTP, or set REGISTRATION_REQUIRE_VERIFICATION=false to "
+            "accept unverified sign-ups knowingly, or REGISTRATION_ENABLED=false "
+            "to turn sign-up off"
+        )
+
     if problems:
         raise RuntimeError(
             f"Refusing to start with ENVIRONMENT={settings.environment!r}: "

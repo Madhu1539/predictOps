@@ -32,6 +32,13 @@ const Verify: React.FC = () => {
       return;
     }
 
+    // Drop the token from the address bar once it has been read. It is single-use
+    // and short-lived, but leaving it in the URL leaves it in browser history and
+    // in anything that records the current location, where it is a credential for
+    // confirming someone's address. replaceState rather than a redirect so the
+    // result below still renders.
+    window.history.replaceState(null, '', window.location.pathname);
+
     verifyEmail(token)
       .then(result => {
         setState(result.verified ? 'done' : 'failed');

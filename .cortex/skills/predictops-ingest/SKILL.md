@@ -23,11 +23,15 @@ cheaper to catch in a preview than to unpick after machines and readings exist.
 Use `curl.exe`, not `curl`. In PowerShell 5.1 `curl` is an alias for
 `Invoke-WebRequest`, which does not accept curl's flags and will fail confusingly.
 
-**Sending JSON on Windows:** write the body to a file and pass `--data-binary
-"@file"`. An inline `-d '{"name":"x"}'` is mangled by PowerShell's quote
-handling and arrives as invalid JSON — verified, it returns a 400
+**Sending JSON on Windows:** pipe the body into curl and read it from stdin with
+`--data-binary "@-"`. An inline `-d '{"name":"x"}'` is mangled by PowerShell's
+quote handling and arrives as invalid JSON — verified, it returns a 400
 `VALIDATION_ERROR` with "Unterminated string". On a POSIX shell the inline form
 is fine.
+
+Use stdin rather than a temporary file. A file holding a password survives a
+failed command, and this working directory is a git repository — a credential
+written here is one `git add .` away from being committed.
 
 ## Workflow
 
@@ -60,14 +64,12 @@ If the file is larger than ~8 MB, note that `MAX_UPLOAD_BYTES` defaults to
 ### Step 3: Create the dataset
 
 ```bash
-'{"name":"<dataset name>","source":"upload"}' | Out-File -Encoding ascii body.json
-curl.exe -s -X POST BASE/api/datasets `
+'{"name":"<dataset name>","source":"upload"}' | curl.exe -s -X POST BASE/api/datasets `
   -H "Content-Type: application/json" `
-  --data-binary "@body.json"
+  --data-binary "@-"
 ```
 
 Keep the returned `id` — every later call needs it. Call it `DSID`.
-Delete `body.json` afterwards.
 
 ### Step 4: Preview the column mapping (writes nothing)
 
@@ -136,16 +138,18 @@ than no score.
 If any mutating call returns **401**, auth is enabled and a token is needed:
 
 ```bash
-'{"username":"planner","password":"<password>"}' | Out-File -Encoding ascii login.json
-curl.exe -s -X POST BASE/api/auth/login `
+'{"username":"planner","password":"<password>"}' | curl.exe -s -X POST BASE/api/auth/login `
   -H "Content-Type: application/json" `
-  --data-binary "@login.json"
+  --data-binary "@-"
 ```
 
 Take `token` from the response and add `-H "Authorization: Bearer <token>"` to
-Steps 3, 4 and 5. Ask the user for the password; do not guess it, and do not echo
-it back in your reply. Delete `login.json` as soon as the token is obtained — it
-holds a plaintext credential.
+Steps 3, 4 and 5.
+
+Ask the user for the password; do not guess it, and do not echo it back in your
+reply. Never write it to a file — stdin keeps it out of the working directory,
+which is a git repository. Note that the shell may still retain the command in
+its history, so prefer a throwaway or demo credential here over a real one.
 
 A **403** means the account lacks `reading:ingest` — `viewer` cannot ingest. Say
 which role is needed rather than retrying.
@@ -161,7 +165,7 @@ which role is needed rather than retrying.
 | `CSV_NO_VALID_ROWS` | every row failed validation | usually unparseable timestamps |
 | `TOO_MANY_MACHINES` | over 200 distinct machine names | the file is probably pivoted the wrong way |
 | `DATASET_NOT_FOUND` | wrong `DSID` | re-read the id from Step 3 |
-| `VALIDATION_ERROR` with "Unterminated string" | PowerShell mangled an inline `-d` body | use the body-file form above |
+| `VALIDATION_ERROR` with "Unterminated string" | PowerShell mangled an inline `-d` body | use the stdin form above |
 
 ## Stopping Points
 

@@ -42,13 +42,30 @@ from app.services.auth_service import (
     verify_password,
 )
 from app.security import client_key, login_limiter, redact_url
-from app.services.email_service import send_verification_email, verification_link
+from app.services.email_service import (
+    send_verification_email,
+    smtp_configured,
+    verification_link,
+)
 from app.services.notification_service import recent_notifications
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# One wording for "your account is pending confirmation", returned whether or not
+# the address was already registered. Two different messages — "Check your email"
+# versus "Account created" — made the endpoint an enumeration oracle despite the
+# matching status code, which defeated the point of not saying "already taken".
+VERIFICATION_PENDING_MESSAGE = (
+    "Check your email to finish setting up your account. If you already have one, "
+    "sign in instead."
+)
+
+# Used when verification is switched off entirely, where there is nothing to
+# confirm and both paths can say the same plain thing.
+ACCOUNT_READY_MESSAGE = "Account created. You can sign in now."
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -172,15 +189,25 @@ async def register(
         # unauthenticated and public, so a distinct response would turn it into an
         # oracle for which addresses hold accounts. The owner of the address learns
         # the real state from their inbox; nobody else learns anything.
+        #
+        # Three things have to match a successful registration, not just the status
+        # code: the message, the `email_sent` flag, and the time taken. The dummy
+        # hash covers the last of those — creating an account costs 120k PBKDF2
+        # rounds (measured ~51 ms), so returning here without paying it makes the
+        # two cases trivially separable with a stopwatch.
+        burn_password_work(payload.password)
         logger.info(f"Registration attempted for an existing account: {email}")
+        requires_verification = settings.registration_require_verification
         return RegisterResponse(
             email=email,
             role=settings.registration_role,
-            verification_required=settings.registration_require_verification,
-            email_sent=False,
+            verification_required=requires_verification,
+            # Mirrors what a genuine registration would report for this
+            # configuration, rather than a flat False that would stand out.
+            email_sent=requires_verification and smtp_configured(),
             message=(
-                "Check your email to finish setting up your account. If you already "
-                "have one, sign in instead."
+                VERIFICATION_PENDING_MESSAGE if requires_verification
+                else ACCOUNT_READY_MESSAGE
             ),
         )
 
@@ -215,7 +242,7 @@ async def register(
             role=user.role,
             verification_required=False,
             email_sent=False,
-            message="Account created. You can sign in now.",
+            message=ACCOUNT_READY_MESSAGE,
         )
 
     token = create_verification_token(email)
@@ -227,7 +254,7 @@ async def register(
             role=user.role,
             verification_required=True,
             email_sent=True,
-            message="Account created. Check your email for the confirmation link.",
+            message=VERIFICATION_PENDING_MESSAGE,
         )
 
     # No SMTP, or the relay refused. The account exists either way, so the link is
@@ -258,7 +285,21 @@ async def verify(
     Idempotent: clicking an already-used link reports success rather than an error,
     because from the person's point of view the address is confirmed either way and
     a failure here reads as "my account is broken".
+
+    Throttled on the same budget as login. Forging a token is infeasible — it is
+    HMAC-signed — but this is an unauthenticated endpoint that runs a database
+    query and a write per call, so it should not be an unlimited lever either.
     """
+    throttle_key = f"verify:{client_key(request)}"
+    if settings.rate_limit_enabled:
+        retry_after = login_limiter().check(throttle_key)
+        if retry_after is not None:
+            raise HTTPException(
+                status_code=429,
+                detail="TOO_MANY_ATTEMPTS",
+                headers={"Retry-After": str(int(retry_after))},
+            )
+
     email = decode_verification_token(payload.token)
     if not email:
         # Covers a bad signature, an expired link and a session token presented

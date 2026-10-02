@@ -25,10 +25,14 @@ rest of the system applies.
 Use `curl.exe`, not `curl` — in PowerShell 5.1 `curl` is an alias for
 `Invoke-WebRequest` and will reject these flags.
 
-**Sending JSON on Windows:** write the body to a file and pass `--data-binary
-"@file"`. An inline `-d '{"machine_id":3}'` is mangled by PowerShell's quote
-handling and returns a 400 `VALIDATION_ERROR` — verified. On a POSIX shell the
-inline form is fine.
+**Sending JSON on Windows:** pipe the body into curl and read it from stdin with
+`--data-binary "@-"`. An inline `-d '{"machine_id":3}'` is mangled by PowerShell's
+quote handling and returns a 400 `VALIDATION_ERROR` — verified. On a POSIX shell
+the inline form is fine.
+
+Use stdin rather than a temporary file. A file holding a password survives a
+failed command, and this working directory is a git repository — a credential
+written here is one `git add .` away from being committed.
 
 ## Workflow
 
@@ -139,11 +143,10 @@ order's id and status instead of retrying.
 Only when Step 2 found no alert and the user still wants an order:
 
 ```bash
-'{"machine_id":MACHINEID}' | Out-File -Encoding ascii wo.json
-curl.exe -s -X POST BASE/api/workorders `
+'{"machine_id":MACHINEID}' | curl.exe -s -X POST BASE/api/workorders `
   -H "Content-Type: application/json" `
   -H "Authorization: Bearer <token>" `
-  --data-binary "@wo.json"
+  --data-binary "@-"
 ```
 
 Assignment, priority and due date are still filled in by `workorder_service`, so
@@ -170,15 +173,15 @@ than reporting a plausible result.
 Steps 5a and 5b need a planner token:
 
 ```bash
-'{"username":"planner","password":"<password>"}' | Out-File -Encoding ascii login.json
-curl.exe -s -X POST BASE/api/auth/login `
+'{"username":"planner","password":"<password>"}' | curl.exe -s -X POST BASE/api/auth/login `
   -H "Content-Type: application/json" `
-  --data-binary "@login.json"
+  --data-binary "@-"
 ```
 
 Use `token` from the response. Ask the user for the password rather than guessing,
-and do not echo it back. Delete `login.json` once the token is obtained — it holds
-a plaintext credential.
+and do not echo it back. Never write it to a file — stdin keeps it out of the
+working directory, which is a git repository. The shell may still retain the
+command in its history, so prefer a throwaway or demo credential here.
 
 A **403** on creation means the account is not a planner. Name the role gap
 instead of retrying — a technician account will never succeed here.
@@ -195,7 +198,7 @@ If `AUTH_ENABLED=false`, no token is needed and the header can be dropped.
 | `401` | auth enabled, no token | log in |
 | `403` | role lacks `workorder:create` | only planner can create |
 | an existing order comes back | idempotency guard | report it; do not retry |
-| `VALIDATION_ERROR` "Unterminated string" | PowerShell mangled an inline `-d` body | use the body-file form |
+| `VALIDATION_ERROR` "Unterminated string" | PowerShell mangled an inline `-d` body | use the stdin form |
 
 ## Stopping Points
 

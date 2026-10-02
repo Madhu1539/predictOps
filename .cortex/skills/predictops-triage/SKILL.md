@@ -28,10 +28,11 @@ them, and the user needs to know which.
 Use `curl.exe`, not `curl`: in PowerShell 5.1 `curl` is an alias for
 `Invoke-WebRequest` and will not accept these flags.
 
-**Sending JSON on Windows:** write the body to a file and pass `--data-binary
-"@file"`. An inline `-d '{"question":"..."}'` is mangled by PowerShell's quote
-handling and returns a 400 `VALIDATION_ERROR` — verified. On a POSIX shell the
-inline form is fine.
+**Sending JSON on Windows:** pipe the body into curl and read it from stdin with
+`--data-binary "@-"`. An inline `-d '{"question":"..."}'` is mangled by
+PowerShell's quote handling and returns a 400 `VALIDATION_ERROR` — verified. On a
+POSIX shell the inline form is fine. stdin also avoids leaving a temporary file
+behind in what is a git repository.
 
 ## Workflow
 
@@ -106,10 +107,9 @@ These are the point of the skill; do not skip them when present.
 For a narrative explanation of one machine:
 
 ```bash
-'{"question":"why is <machine> at risk?"}' | Out-File -Encoding ascii q.json
-curl.exe -s -X POST BASE/api/investigate `
+'{"question":"why is <machine> at risk?"}' | curl.exe -s -X POST BASE/api/investigate `
   -H "Content-Type: application/json" `
-  --data-binary "@q.json"
+  --data-binary "@-"
 ```
 
 The response carries `answer`, `source` (`cortex` / `gemini` / `deterministic` /
@@ -151,7 +151,7 @@ Do not present `total_value_at_risk` as money saved.
 | all deviations 0 and references look wrong | baselines not yet backfilled | happens on a cold first boot; re-check shortly |
 | `429` from investigate | LLM rate limit | wait; the ranking itself needs no LLM |
 | investigate hangs ~20s | Cortex retrying a browser login | re-prime Cortex, or set `LLM_PROVIDER=none` |
-| `VALIDATION_ERROR` "Unterminated string" | PowerShell mangled an inline `-d` body | use the body-file form |
+| `VALIDATION_ERROR` "Unterminated string" | PowerShell mangled an inline `-d` body | use the stdin form |
 
 ## Stopping Points
 

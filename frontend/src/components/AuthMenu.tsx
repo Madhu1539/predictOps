@@ -20,6 +20,24 @@ import type { CurrentUser, RegisterResponse } from '../types';
  * Renders as a compact status chip; the panel only appears when it is needed.
  */
 
+/**
+ * Pass a URL through only if it is http(s).
+ *
+ * The confirmation link is built server-side from FRONTEND_BASE_URL, so it is
+ * operator configuration rather than attacker input — but React does not sanitise
+ * `href`, and a `javascript:` value there executes on click. A misconfigured or
+ * tampered setting should produce a dead link, not script execution.
+ */
+const safeHttpUrl = (value?: string | null): string | null => {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value, window.location.origin);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? value : null;
+  } catch {
+    return null;
+  }
+};
+
 const panelStyle: React.CSSProperties = {
   position: 'absolute', top: 32, right: 0, width: 278, zIndex: 50,
   background: '#111827', border: '1px solid #1e2d45', borderRadius: 10,
@@ -174,12 +192,12 @@ const AuthMenu: React.FC = () => {
             {registered.message}
           </div>
 
-          {registered.verification_link && (
+          {safeHttpUrl(registered.verification_link) && (
             // Only present when the server could not send mail. Surfaced rather
             // than hidden, because the account is otherwise unusable with no way
             // to find out why.
             <>
-              <a href={registered.verification_link}
+              <a href={safeHttpUrl(registered.verification_link)!}
                 style={{
                   fontSize: 11, color: '#3b82f6', wordBreak: 'break-all',
                   background: '#0a0d14', border: '1px solid #1e2d45',

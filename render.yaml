@@ -106,6 +106,20 @@ services:
         value: "true"
       - key: REGISTRATION_ROLE
         value: planner
+
+      # ⚠ READ THIS BEFORE DEPLOYING ⚠
+      # Startup REFUSES to boot in a non-development environment when this is
+      # true and no SMTP host is configured, because with no mail transport the
+      # confirmation link is returned in the registration response — so anyone
+      # can confirm an address they do not own and verification proves nothing.
+      #
+      # Pick one:
+      #   1. Set SMTP_HOST / SMTP_FROM / SMTP_USERNAME / SMTP_PASSWORD below
+      #      (dashboard) and leave this true. Verification actually works.
+      #   2. Set this to "false". Sign-up works with no email step, and you are
+      #      knowingly accepting unverified addresses.
+      #   3. Set REGISTRATION_ENABLED=false above. No public sign-up at all;
+      #      judges use the seeded planner / technician / viewer accounts.
       - key: REGISTRATION_REQUIRE_VERIFICATION
         value: "true"
 
@@ -116,12 +130,12 @@ services:
       - key: FRONTEND_BASE_URL
         value: https://predict-ops-six.vercel.app
 
-      # Optional, dashboard only. With SMTP_HOST unset the confirmation link is
-      # returned in the registration response and displayed in the UI instead of
-      # being emailed. That keeps sign-up usable, but it hands the link to
-      # whoever submitted the address — so verification stops proving ownership.
-      # Configure these, or set REGISTRATION_REQUIRE_VERIFICATION=false and
-      # accept unverified sign-ups knowingly.
+      # Optional, dashboard only — but see the warning on
+      # REGISTRATION_REQUIRE_VERIFICATION above: with SMTP_HOST unset and
+      # verification required, startup refuses to boot. Without mail the
+      # confirmation link comes back in the registration response, which hands
+      # it to whoever submitted the address and stops verification proving
+      # ownership. Configure these, or turn verification off deliberately.
       - key: SMTP_HOST
         sync: false
       - key: SMTP_USERNAME

@@ -64,6 +64,11 @@ REGISTER_LAYOUT: Tuple[Tuple[str, int, bool], ...] = (
 # chunked instead of relying on the device to cope.
 MAX_REGISTERS_PER_READ = 125
 
+# Floor on the poll interval. A configured 0 (or a negative) turns the loop into
+# a busy wait that saturates a core, hammers the device and writes to the
+# database as fast as it can — so the value is clamped rather than trusted.
+MIN_POLL_SECONDS = 0.2
+
 # Rejected rather than stored. These are not tight engineering limits — the
 # absolute-limit checks in `anomaly_service` do that work, and clamping here
 # would hide a genuinely alarming reading. These catch a *decode* that has gone
@@ -157,8 +162,11 @@ def read_plan(
     chunk boundary is aligned to `stride` so a machine's registers are never
     split across two responses, which would otherwise require stitching partial
     blocks back together.
+
+    A `stride` wider than one frame cannot be served at all, so it yields no
+    requests rather than emitting one the device is certain to reject.
     """
-    if machine_count <= 0 or stride <= 0:
+    if machine_count <= 0 or stride <= 0 or stride > MAX_REGISTERS_PER_READ:
         return []
     machines_per_chunk = max(1, MAX_REGISTERS_PER_READ // stride)
     plan = []
@@ -333,10 +341,10 @@ async def modbus_poll_loop() -> None:
     from app.database import AsyncSessionLocal
 
     host, port = settings.modbus_host, settings.modbus_port
+    interval = max(MIN_POLL_SECONDS, float(settings.modbus_poll_seconds or 0))
     logger.info(
         "Modbus TCP poller starting: %s:%s device_id=%s machines=%s every %ss",
-        host, port, settings.modbus_device_id, len(labels),
-        settings.modbus_poll_seconds,
+        host, port, settings.modbus_device_id, len(labels), interval,
     )
 
     backoff = 1.0
@@ -369,7 +377,7 @@ async def modbus_poll_loop() -> None:
                 else:
                     logger.debug("Modbus poll: stored %s", outcome.readings_stored)
 
-                await asyncio.sleep(settings.modbus_poll_seconds)
+                await asyncio.sleep(interval)
 
         except asyncio.CancelledError:
             logger.info("Modbus poller stopping.")
