@@ -204,7 +204,14 @@ async def test_comparison_uses_only_the_machines_named(client):
 async def test_comparison_verdict_matches_its_own_evidence(client):
     """A plain max() on the top signal resolved ties to whichever machine was listed
     first, which declared M-102 worse than M-103 even though M-103's deviation was
-    higher (80 vs 71). The verdict must follow the numbers shown."""
+    higher (80 vs 71). The verdict must follow the numbers shown.
+
+    The ranking compares the three *scores* — absolute-limit severity, model-free
+    deviation and ML risk — all on a 0-100 scale. An earlier version of this test
+    substituted the limit-breach count for the absolute score, which ranked
+    "2 breaches" below any non-zero score and disagreed with the application
+    whenever the top two signals tied.
+    """
     async with AsyncSessionLocal() as db:
         result = await investigate(db, "Compare M-102 and M-103")
 
@@ -214,15 +221,54 @@ async def test_comparison_verdict_matches_its_own_evidence(client):
 
     def strength(row):
         return sorted(
-            (row["ml_risk"] or 0.0, row["deviation"] or 0.0, row["limit_breaches"] or 0),
+            (
+                row["absolute_score"] or 0.0,
+                row["deviation"] or 0.0,
+                row["ml_risk"] or 0.0,
+            ),
             reverse=True,
-        )
+        ) + [row["limit_breaches"] or 0]
 
     ranked = sorted(rows, key=strength, reverse=True)
     if strength(ranked[0]) != strength(ranked[1]):
         assert f"{ranked[0]['machine']} is the worse" in answer, answer
     else:
         assert "equally bad" in answer, answer
+
+
+@pytest.mark.asyncio
+async def test_comparison_names_the_signal_that_decided_it(client):
+    """The deciding number can be one the summary line does not print.
+
+    A machine at ML 0% can outrank one at ML 100% because its absolute-limit
+    severity is higher. Saying only "on the strongest signal" makes that look
+    like the verdict contradicts its own evidence, so the basis is named.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await investigate(db, "Compare M-102 and M-103")
+
+    answer = result["answer"]
+    if "equally bad" in answer:
+        pytest.skip("machines are tied on every signal; no deciding basis exists")
+
+    assert any(
+        basis in answer
+        for basis in ("published-limit severity", "model-free deviation", "ML risk")
+    ), answer
+    # Both sides of the comparison are quoted, so the claim is checkable.
+    assert " vs " in answer, answer
+
+
+@pytest.mark.asyncio
+async def test_comparison_evidence_carries_every_ranked_signal(client):
+    """Whatever the ranking uses has to be in the evidence, or the answer cannot
+    be audited against the numbers it was given."""
+    async with AsyncSessionLocal() as db:
+        result = await investigate(db, "Compare M-102 and M-103")
+
+    for row in result["evidence"]:
+        for field in ("ml_risk", "deviation", "absolute_score", "limit_breaches"):
+            assert field in row, f"{field} missing from {row}"
 
 
 @pytest.mark.asyncio

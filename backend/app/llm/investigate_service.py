@@ -1332,16 +1332,43 @@ def deterministic_answer(intent: str, evidence: dict) -> str:
         # A plain `max()` on the top signal alone resolved ties to whichever machine
         # happened to be listed first: with both at absolute 100, it called M-102
         # worse than M-103 despite M-103 having the higher deviation (80 vs 71).
+        def _signal_values(context: dict) -> dict:
+            return {
+                "absolute_score": context.get("absolute_score") or 0.0,
+                "deviation_score": context.get("deviation_score") or 0.0,
+                "ml_risk_score": context.get("ml_risk_score") or 0.0,
+            }
+
         def _severity_key(context: dict) -> tuple:
-            signals = sorted(
-                (
-                    context.get("absolute_score") or 0.0,
-                    context.get("deviation_score") or 0.0,
-                    context.get("ml_risk_score") or 0.0,
-                ),
-                reverse=True,
-            )
+            signals = sorted(_signal_values(context).values(), reverse=True)
             return tuple(signals) + (len(context.get("absolute_concerns") or []),)
+
+        SIGNAL_LABELS = {
+            "absolute_score": "published-limit severity",
+            "deviation_score": "model-free deviation",
+            "ml_risk_score": "ML risk",
+        }
+
+        def _deciding_signal(worst: dict, runner_up: dict):
+            """Which signal actually separated them, and both values.
+
+            The verdict used to say only "on the strongest signal", which left
+            the reader to guess. That is a real problem when the deciding number
+            is one the summary line does not print: a machine at ML 0% can be
+            ranked above one at ML 100% because its absolute-limit severity is
+            higher, and without naming it the verdict looks like it contradicts
+            its own evidence.
+            """
+            worst_sorted = sorted(
+                _signal_values(worst).items(), key=lambda kv: kv[1], reverse=True
+            )
+            runner_sorted = sorted(
+                _signal_values(runner_up).items(), key=lambda kv: kv[1], reverse=True
+            )
+            for (name, worst_value), (_, runner_value) in zip(worst_sorted, runner_sorted):
+                if worst_value != runner_value:
+                    return name, worst_value, runner_value
+            return None, None, None
 
         ordered = sorted(machines, key=_severity_key, reverse=True)
         worst, runner_up = ordered[0], ordered[1]
@@ -1352,10 +1379,15 @@ def deterministic_answer(intent: str, evidence: dict) -> str:
                 "every signal available."
             )
         else:
+            name, worst_value, runner_value = _deciding_signal(worst, runner_up)
+            basis = (
+                f" on {SIGNAL_LABELS[name]} ({worst_value:g} vs {runner_value:g})"
+                if name else " on the strongest signal"
+            )
             verdict = (
-                f"{worst['machine']} is the worse of the two on the strongest signal."
+                f"{worst['machine']} is the worse of the two{basis}."
                 if len(machines) == 2
-                else f"{worst['machine']} is the worst of the {len(machines)} on the strongest signal."
+                else f"{worst['machine']} is the worst of the {len(machines)}{basis}."
             )
         return "; ".join(lines) + f". {verdict}"
 
@@ -1717,6 +1749,10 @@ def _evidence_rows(intent: str, evidence: dict) -> list:
                 "severity": c.get("severity") or "Normal",
                 "ml_risk": c.get("ml_risk_score"),
                 "deviation": c.get("deviation_score"),
+                # The verdict can be decided by absolute-limit severity, so it
+                # belongs in the evidence: without it a caller cannot check the
+                # ranking against the numbers they were given.
+                "absolute_score": c.get("absolute_score"),
                 "limit_breaches": len(c.get("absolute_concerns") or []),
                 "confidence": c.get("confidence"),
             }

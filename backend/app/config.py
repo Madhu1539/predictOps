@@ -107,6 +107,48 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_use_tls: bool = True
 
+    # ─── Modbus TCP ingestion ─────────────────────────────────────────────────
+    # A real industrial protocol client. Off by default because enabling it makes
+    # the process dial out to MODBUS_HOST on a loop, which should be a deliberate
+    # act rather than something a fresh clone does on first boot.
+    #
+    # This only works where the process can reach the device. A cloud instance
+    # cannot open a connection into a plant network, so in a real deployment this
+    # runs on an edge gateway inside the plant; see the README.
+    modbus_enabled: bool = False
+    modbus_host: str = "127.0.0.1"
+    # 502 is the registered Modbus port. The bundled demo server uses 5020
+    # because binding 502 needs privileges on most systems.
+    modbus_port: int = 5020
+    # Modbus addresses a device behind a gateway by unit id. Direct TCP devices
+    # conventionally answer on 1, but gateways multiplex several serial units.
+    modbus_device_id: int = 1
+    modbus_poll_seconds: float = 5.0
+
+    # Machine labels, comma-separated. ORDER IS SIGNIFICANT: position maps to
+    # register address, so reordering this repoints every machine at a different
+    # block of the device's memory.
+    modbus_machines: str = ""
+    modbus_machine_type: str = "Unknown"
+    # Dataset these machines are grouped under, so they can be reported on and
+    # removed without touching the synthetic demo fleet.
+    modbus_dataset_name: str = "Modbus PLC floor"
+
+    # Layout: each machine occupies `registers_per_machine` consecutive holding
+    # registers starting at `base_address`, in the order vibration, temperature,
+    # rpm.
+    modbus_base_address: int = 0
+    modbus_registers_per_machine: int = 3
+
+    # Modbus registers are 16-bit integers with no unit information, so the
+    # device scales engineering values to fit: 2.45 mm/s is sent as 245. These
+    # divisors must match how the PLC was programmed — getting one wrong shifts
+    # every downstream score by that factor, which is why they are explicit
+    # settings and not constants.
+    modbus_vibration_scale: float = 100.0
+    modbus_temperature_scale: float = 10.0
+    modbus_rpm_scale: float = 1.0
+
     model_config = {"env_file": ".env", "extra": "ignore", "protected_namespaces": ("settings_",)}
 
     @property

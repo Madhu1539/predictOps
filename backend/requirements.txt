@@ -41,3 +41,11 @@ snowflake-connector-python>=3.12
 alembic==1.13.3
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+
+# Modbus TCP client for app/services/modbus_source.py, the industrial-protocol
+# ingestion path. Pinned below 4 because pymodbus 4 removes the server context
+# classes that tools/modbus_plc_sim.py once used, and changes client keyword
+# names (`slave` became `device_id` during 3.x). The adapter is unused unless
+# MODBUS_ENABLED is set, and a missing install disables the feature rather than
+# stopping the API.
+pymodbus>=3.6,<4

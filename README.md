@@ -162,9 +162,18 @@ returned to the client so every claim can be checked.
 
 | Side | Data | Source |
 |---|---|---|
-| OT | vibration, temperature, RPM, downtime, production counts | simulator, REST ingest, CSV upload |
+| OT | vibration, temperature, RPM, downtime, production counts | **Modbus TCP**, simulator, REST ingest, CSV upload |
 | Maintenance | history, failure modes, parts used, spare stock | seeded records |
 | IT / ERP | cost centres (downtime cost/hour), material cost + lead time, production orders | `cost_centers`, `materials`, `production_orders` |
+
+The convergence is **load-bearing in the model itself**, not a side-by-side
+display. Alongside the raw and rolling sensor features, the feature matrix carries
+`days_since_last_maintenance`, `maintenance_count`, `previous_failure_count`,
+`machine_age_days`, `criticality_encoded`, machine-type one-hots, `recent_downtime`,
+`production_count` and `machine_availability` (see
+`app/ml/feature_engineering.py`). The ERP and maintenance context is an *input to
+the prediction*, which is the point: the premise of the problem is that this
+context normally sits apart from the sensor data.
 
 This is what makes the output actionable rather than merely informative. OT data
 says a bearing is degrading; maintenance history says it failed this way before; ERP
@@ -176,6 +185,60 @@ Production impact is computed from **open production orders in the next 7 days**
 (`planned_qty - actual_qty`) and escalating when any order is already In Progress.
 When a machine has no orders, it falls back to criticality and says so through
 `basis: criticality_fallback` — the two are never silently conflated.
+
+### Ingesting from a real device (Modbus TCP)
+
+Four ingestion paths exist, all landing in `_persist_and_score` so everything is
+scored by the same code:
+
+| Source tag | Path |
+|---|---|
+| `modbus` | **Modbus TCP client** polling a PLC, VFD or gateway |
+| `simulator` | the bundled synthetic fleet |
+| `csv` | file upload through the UI |
+| `api` | direct `POST /api/readings` |
+
+`app/services/modbus_source.py` speaks real Modbus TCP over a socket, so pointing
+`MODBUS_HOST` at physical hardware works unchanged. To see it without a PLC:
+
+```bash
+python tools/modbus_plc_sim.py          # terminal 1: serves genuine Modbus TCP
+```
+```bash
+# terminal 2
+MODBUS_ENABLED=true MODBUS_MACHINES=PLC-PUMP-01,PLC-CNC-02,PLC-PRESS-03 \
+  python -m app.main
+```
+
+The new source then appears in the UI's **Feeds** chip beside `simulator` and
+`csv`, with no frontend change, because `/api/readings/status` groups by source.
+
+Three things this had to get right, none of which Modbus tells you:
+
+- **Scaling is a convention, not metadata.** Registers are 16-bit integers with
+  no units, so 2.45 mm/s travels as the integer `245`. The divisor lives in a
+  commissioning document, which is why `MODBUS_*_SCALE` are explicit settings —
+  a wrong one shifts every downstream score by that factor.
+- **Sign is a convention too.** Temperature is decoded signed so sub-zero
+  readings work; vibration and RPM are unsigned, because a negative value there
+  is a fault rather than a measurement.
+- **An all-`0xFFFF` block is an unmapped address**, and it is detected on the raw
+  words *before* scaling — decoded as a signed temperature it reads `-0.1 °C`,
+  which passes every plausibility check and would be stored as real.
+
+Machines created this way are marked `external`, so the simulator can never write
+over readings that came from real hardware.
+
+**Honest scope:** the protocol client is real and tested; the device in the demo
+is not. `tools/modbus_plc_sim.py` is a *device* simulator — it serves genuine
+Modbus TCP frames, deliberately on the standard library alone, so that the
+adapter is verified by pymodbus's real client talking to an independent
+implementation rather than to itself. Nothing here has been tested against plant
+hardware.
+
+And a deployment note: a cloud instance **cannot** open a connection into a plant
+network. Real installations put an edge gateway inside the plant; `MODBUS_ENABLED`
+on Render will just log "unreachable" and retry.
 
 ---
 
@@ -653,7 +716,7 @@ cd backend
 python -m pytest -q
 ```
 
-**372 tests.** The suite forces `LLM_PROVIDER=none`, so it never calls a language
+**425 tests.** The suite forces `LLM_PROVIDER=none`, so it never calls a language
 model: real Cortex and Gemini requests made tests slow (measured 70–127 s),
 non-deterministic, and able to fail because a quota was exhausted rather than because
 the code was wrong. Tests that exercise the LLM path stub the provider and assert on
@@ -725,6 +788,10 @@ Stated plainly, because a judge will find these anyway.
   advisory rather than enforcing.
 - **Cortex is local-only.** Deployed instances run on Gemini and its daily cap, then
   the deterministic template.
+- **Modbus is a real protocol client against a simulated device.** The adapter
+  speaks genuine Modbus TCP and would work against a PLC, but nothing here has
+  been tested on plant hardware. There is also no OPC-UA or MQTT adapter yet;
+  those are new classes against the same `_persist_and_score` seam, not a rewrite.
 
 ---
 

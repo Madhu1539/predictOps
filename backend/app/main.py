@@ -88,12 +88,30 @@ async def lifespan(app: FastAPI):
     )
     logger.info(f"Live feed started ({settings.live_feed_interval_seconds}s interval)")
 
+    # Modbus TCP ingestion, only when explicitly enabled. Starting it by default
+    # would make a fresh clone dial out to MODBUS_HOST on a loop.
+    background_tasks = [live_feed_task, prepare_task]
+    if settings.modbus_enabled:
+        try:
+            from app.services.modbus_source import modbus_poll_loop
+            modbus_task = asyncio.create_task(modbus_poll_loop())
+            background_tasks.append(modbus_task)
+            logger.info(
+                "Modbus poller started (%s:%s every %ss)",
+                settings.modbus_host, settings.modbus_port,
+                settings.modbus_poll_seconds,
+            )
+        except ImportError as exc:
+            # pymodbus is a real dependency but an optional capability. A missing
+            # install should disable the feature, not stop the API from serving.
+            logger.warning("Modbus enabled but unavailable: %s", exc)
+
     yield
 
     # Shutdown
-    live_feed_task.cancel()
-    prepare_task.cancel()
-    for task in (live_feed_task, prepare_task):
+    for task in background_tasks:
+        task.cancel()
+    for task in background_tasks:
         try:
             await task
         except asyncio.CancelledError:
