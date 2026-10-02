@@ -19,6 +19,7 @@ part number, the assignee and the evidence behind the conclusion.
 - [How IT and OT converge](#how-it-and-ot-converge)
 - [The three independent signals](#the-three-independent-signals)
 - [Natural-language investigation](#natural-language-investigation)
+- [CoCo skills](#coco-skills)
 - [API reference](#api-reference)
 - [Bring your own data](#bring-your-own-data)
 - [Configuration](#configuration)
@@ -229,6 +230,33 @@ with one machine's root cause.
 
 The question is fenced inside `<question>` delimiters and the prompt states that its
 contents are untrusted input, never instructions.
+
+---
+
+## CoCo skills
+
+Three Cortex Code (CoCo) skills in `.cortex/skills/` drive PredictOps as an agent
+workflow, so the whole loop can be run by asking in plain English rather than
+clicking through the UI:
+
+| Skill | Input | What it does |
+|---|---|---|
+| `/predictops-ingest` | a sensor CSV | creates a dataset, shows how your columns were understood, commits the readings, reports data quality |
+| `/predictops-triage` | optional dataset | ranks the fleet worst-first across all three signals and calls out where they disagree |
+| `/predictops-workorder` | a machine or alert | gathers cost and production impact, then raises the work order |
+
+They chain: **ingest → triage → workorder**.
+
+Two deliberate constraints. They talk to the **HTTP API**, not the database, so
+they exercise the same path the UI does and work unchanged against a deployed
+instance. And they **stop before writing** — ingest pauses after the read-only
+column preview, and workorder pauses before creating the order — because a
+misread column or a wrong work order costs real cleanup, while reads cost nothing.
+
+Every endpoint and field name in the three skills is verified against the running
+API, not written from memory. They also use `curl.exe` rather than `curl` and pass
+JSON through a body file, because in PowerShell 5.1 `curl` is an alias for
+`Invoke-WebRequest` and an inline `-d '{...}'` arrives as malformed JSON.
 
 ---
 
