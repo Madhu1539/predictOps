@@ -9,6 +9,7 @@ const Investigate = lazy(() => import('./pages/Investigate'));
 const BringYourData = lazy(() => import('./pages/BringYourData'));
 const OeeLosses   = lazy(() => import('./pages/OeeLosses'));
 const ModelCard   = lazy(() => import('./pages/ModelCard'));
+const Verify      = lazy(() => import('./pages/Verify'));
 
 /* ── Icons ─────────────────────────────────────────────────── */
 const IconDash = () => (
@@ -80,6 +81,7 @@ const PageTitle: React.FC = () => {
   const map: Record<string, string> = {
     '/': 'Command Center', '/workorders': 'Work Orders', '/investigate': 'Investigation',
     '/your-data': 'Bring Your Own Data', '/oee': 'OEE Loss Analysis', '/model': 'Model Transparency',
+    '/verify': 'Account Verification',
   };
   return <span style={{ fontSize:12, color:'#475569', fontWeight:500 }}>{map[loc.pathname] ?? 'Machine Detail'}</span>;
 };
@@ -173,6 +175,9 @@ const App: React.FC = () => {
                 <Route path="/investigate" element={<Investigate />} />
                 <Route path="/model" element={<ModelCard />} />
                 <Route path="/your-data" element={<BringYourData />} />
+              {/* Landing page for the confirmation link in a verification email.
+                  Not in the sidebar: it is only ever reached from that link. */}
+              <Route path="/verify" element={<Verify />} />
                 {/* Catch-all, so a mistyped URL renders the command center rather
                     than a blank page with no navigation. */}
                 <Route path="*" element={<Dashboard />} />

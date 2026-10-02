@@ -15,6 +15,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from typing import Optional
 
@@ -32,6 +33,9 @@ settings = get_settings()
 
 PBKDF2_ROUNDS = 120_000
 TOKEN_TTL_SECONDS = 12 * 3600
+# Verification links are emailed, so they outlive a session but must not be
+# indefinitely replayable.
+VERIFICATION_TTL_SECONDS = 24 * 3600
 
 # Salt used to burn the same CPU when a username does not exist, so a caller
 # cannot tell "no such user" from "wrong password" by timing the response.
@@ -44,6 +48,55 @@ ROLE_PERMISSIONS = {
     "technician": {"alert:update", "workorder:update", "reading:ingest"},
     "viewer": set(),
 }
+
+# Deliberately permissive and structural rather than a clever pattern. Email syntax
+# is far looser than most regexes assume (RFC 5322 allows quoted locals, plus
+# addressing, long TLDs), and rejecting a valid address is a worse failure than
+# accepting a malformed one that simply never receives its verification link.
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+
+MIN_PASSWORD_LENGTH = 10
+MAX_PASSWORD_LENGTH = 200
+MAX_EMAIL_LENGTH = 254  # RFC 5321 limit on a forward path
+
+
+def normalise_email(email: str) -> str:
+    """Lowercased and trimmed. Addresses are case-insensitive in practice, and
+    storing them as typed would let `A@x.com` and `a@x.com` become two accounts."""
+    return (email or "").strip().lower()
+
+
+def validate_email(email: str) -> Optional[str]:
+    """Return an error message, or None when the address is acceptable."""
+    if not email:
+        return "Enter an email address."
+    if len(email) > MAX_EMAIL_LENGTH:
+        return f"Email address must be {MAX_EMAIL_LENGTH} characters or fewer."
+    if not _EMAIL_PATTERN.match(email):
+        return "That does not look like an email address."
+    return None
+
+
+def validate_password(password: str) -> Optional[str]:
+    """Return an error message, or None when the password is acceptable.
+
+    Length is the requirement that actually matters, so it carries the policy. A
+    composition rule ("one capital, one digit, one symbol") pushes people towards
+    `Password1!`, which is weaker than a longer passphrase and is what every
+    cracking dictionary already contains.
+
+    The upper bound exists because PBKDF2 hashes the input at 120k rounds: an
+    unbounded password is a CPU-exhaustion lever on an unauthenticated endpoint.
+    """
+    if not password:
+        return "Choose a password."
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"Password must be at least {MIN_PASSWORD_LENGTH} characters."
+    if len(password) > MAX_PASSWORD_LENGTH:
+        return f"Password must be {MAX_PASSWORD_LENGTH} characters or fewer."
+    if password.strip() == "":
+        return "Password cannot be only whitespace."
+    return None
 
 
 def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
@@ -79,7 +132,12 @@ def _sign(payload_b64: str) -> str:
 
 
 def create_token(username: str, role: str) -> str:
-    payload = {"sub": username, "role": role, "exp": int(time.time()) + TOKEN_TTL_SECONDS}
+    payload = {
+        "sub": username,
+        "role": role,
+        "kind": "session",
+        "exp": int(time.time()) + TOKEN_TTL_SECONDS,
+    }
     payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     return f"{payload_b64}.{_sign(payload_b64)}"
 
@@ -105,12 +163,47 @@ def decode_token(token: str) -> Optional[dict]:
     return payload
 
 
+def create_verification_token(email: str) -> str:
+    """A signed, expiring link token proving the holder received the email.
+
+    Signed with the same secret rather than stored in a table: nothing needs to be
+    revoked, the token carries its own expiry, and a verification row would be a
+    second source of truth for a fact already recorded on the user. `kind` is
+    included and checked so a session token cannot be presented as a verification
+    token, or the reverse.
+    """
+    payload = {
+        "sub": normalise_email(email),
+        "kind": "verify",
+        "exp": int(time.time()) + VERIFICATION_TTL_SECONDS,
+    }
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    return f"{payload_b64}.{_sign(payload_b64)}"
+
+
+def decode_verification_token(token: str) -> Optional[str]:
+    """Return the verified email address, or None when the token is unusable."""
+    payload = decode_token(token or "")
+    if not payload or payload.get("kind") != "verify":
+        return None
+    return payload.get("sub")
+
+
 async def get_current_user(request: Request) -> Optional[dict]:
-    """Resolve the caller from the Authorization header, if present."""
+    """Resolve the caller from the Authorization header, if present.
+
+    Requires `kind == "session"`. Both token types are signed with the same secret,
+    so without this check a verification link — which is emailed, and therefore far
+    more exposed than a session token — would authenticate as its subject when
+    presented as a Bearer credential.
+    """
     header = request.headers.get("Authorization") or ""
     if not header.lower().startswith("bearer "):
         return None
-    return decode_token(header.split(" ", 1)[1].strip())
+    payload = decode_token(header.split(" ", 1)[1].strip())
+    if not payload or payload.get("kind") != "session":
+        return None
+    return payload
 
 
 def require_permission(permission: str):

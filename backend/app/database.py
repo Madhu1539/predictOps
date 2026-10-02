@@ -10,6 +10,44 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
+
+# Columns added to tables that may already exist, applied on EVERY dialect.
+#
+# Distinct from the SQLite-only block inside `init_db`, which exists to retrofit
+# databases created by older local versions and is written in SQLite's own dialect.
+# A deployed Postgres database is just as "pre-existing" as a local SQLite file:
+# `create_all` skips a table that is already there, so a new column on `users`
+# would never appear on the live database and every query naming it would fail.
+#
+# Deliberately nullable with no DEFAULT, because `DEFAULT 0` versus `DEFAULT FALSE`
+# differs between the two dialects. The application reads NULL as "not set".
+PORTABLE_ADDITIONS: Tuple[Tuple[str, str, str], ...] = (
+    ("users", "email", "ALTER TABLE users ADD COLUMN email VARCHAR"),
+    ("users", "email_verified", "ALTER TABLE users ADD COLUMN email_verified BOOLEAN"),
+)
+
+
+async def _existing_columns(conn, table: str) -> set:
+    """Column names of `table`, or an empty set when the table does not exist.
+
+    `PRAGMA table_info` is SQLite-only, so Postgres is asked through
+    `information_schema`, which is standard and available on both.
+    """
+    if conn.dialect.name == "sqlite":
+        rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
+        return {row[1] for row in rows}
+
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = :t AND table_schema = current_schema()"
+            ),
+            {"t": table},
+        )
+    ).fetchall()
+    return {row[0] for row in rows}
+
 settings = get_settings()
 
 
@@ -223,19 +261,20 @@ REQUIRED_INDEXES = (
 
 
 async def init_db():
-    """Create all tables, then ensure required indexes exist.
+    """Create all tables, apply additive columns, then ensure indexes exist.
 
-    `create_all` skips existing tables entirely, so it will not retrofit
-    indexes onto an already-seeded database. The explicit statements below
-    are idempotent and guarantee the spec-required composite indexes exist
-    regardless of when the database was first created.
+    `create_all` skips existing tables entirely, so it will not retrofit columns or
+    indexes onto an already-created database. Three separate concerns follow:
 
-    Everything after the index block is a SQLite-only migration shim. It exists to
-    retrofit databases created by earlier versions of this app, and it is written in
-    SQLite's own dialect (`PRAGMA`, `sqlite_master`, table rebuild). A fresh
-    Postgres database has nothing to retrofit: `create_all` builds the current
-    schema straight from the models, which already declare these columns and their
-    nullability. Running the shim there would fail on the first `PRAGMA`.
+    1. `PORTABLE_ADDITIONS` runs on every dialect. A deployed Postgres database is
+       just as pre-existing as a local SQLite file, so a new column must be added
+       there too.
+    2. `REQUIRED_INDEXES` is idempotent and guarantees the spec-required composite
+       indexes exist regardless of when the database was first created.
+    3. The SQLite-only shim retrofits databases created by earlier local versions
+       and is written in SQLite's own dialect (`PRAGMA`, `sqlite_master`, table
+       rebuild). A Postgres database has nothing to retrofit there, and running it
+       would fail on the first `PRAGMA`.
     """
     async with engine.begin() as conn:
         # Importing the package registers every model on Base.metadata.
@@ -243,6 +282,12 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
         if conn.dialect.name != "sqlite":
+            for table, column, ddl in PORTABLE_ADDITIONS:
+                columns = await _existing_columns(conn, table)
+                if columns and column not in columns:
+                    logger.info(f"Adding {table}.{column}")
+                    await conn.execute(text(ddl))
+
             # Every indexed column exists by definition here, because the schema was
             # just built from the models.
             for statement in REQUIRED_INDEXES:
@@ -256,7 +301,7 @@ async def init_db():
         # Additive columns on pre-existing tables; create_all will not add them.
         # Must run before the index block: ix_machines_dataset_origin indexes
         # dataset_id and data_origin, which a legacy database does not yet have.
-        for table, column, ddl in (
+        for table, column, ddl in PORTABLE_ADDITIONS + (
             ("sensor_readings", "risk_score", "ALTER TABLE sensor_readings ADD COLUMN risk_score FLOAT"),
             ("alerts", "degraded_mode", "ALTER TABLE alerts ADD COLUMN degraded_mode BOOLEAN DEFAULT 0 NOT NULL"),
             ("machines", "cost_center_code", "ALTER TABLE machines ADD COLUMN cost_center_code VARCHAR"),
@@ -283,8 +328,7 @@ async def init_db():
             ("alerts", "confidence", "ALTER TABLE alerts ADD COLUMN confidence VARCHAR"),
             ("alerts", "confidence_detail", "ALTER TABLE alerts ADD COLUMN confidence_detail VARCHAR"),
         ):
-            existing = await conn.execute(text(f"PRAGMA table_info({table})"))
-            columns = {row[1] for row in existing.fetchall()}
+            columns = await _existing_columns(conn, table)
             if columns and column not in columns:
                 await conn.execute(text(ddl))
 

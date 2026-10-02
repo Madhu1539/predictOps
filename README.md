@@ -251,7 +251,7 @@ contents are untrusted input, never instructions.
 | Model transparency | `GET /api/model` | Selected model, all candidates, importance, risk bands |
 | Datasets (BYOD) | `GET/POST /api/datasets`, `/preview`, `/upload`, `/quality` | Your own CSV through the same pipeline |
 | Reports | `GET /api/report`, `/api/report/html` | Self-contained HTML, no external assets |
-| Auth + audit | `POST /api/auth/login`, `GET /api/auth/me`, `GET /api/auth/audit` | Role-gated mutations, audit trail |
+| Auth + audit | `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/auth/verify`, `GET /api/auth/me`, `GET /api/auth/audit` | Self-registration, role-gated mutations, audit trail |
 | Live push | `GET /api/stream` | SSE; the 15s poll stays as fallback |
 | Health | `GET /api/health` | DB, model, seeding state, fleet size |
 
@@ -338,6 +338,18 @@ AUTO_WORK_ORDER_SEVERITIES=Critical
 AUTH_ENABLED=false               # gates MUTATIONS only; reads are always open
 SECRET_KEY=predictops-dev-secret-change-me
 DEMO_PASSWORD=predictops
+
+REGISTRATION_ENABLED=true              # visitors can create their own account
+REGISTRATION_ROLE=planner              # role granted to self-registered accounts
+REGISTRATION_REQUIRE_VERIFICATION=true # login returns 403 until email is confirmed
+FRONTEND_BASE_URL=                     # confirmation links point here, not at the API
+
+SMTP_HOST=                       # blank = link returned in the response, not emailed
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM=                       # blank falls back to SMTP_USERNAME
+SMTP_USE_TLS=true
 
 CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 MAX_UPLOAD_BYTES=8388608         # request bodies are buffered in memory
@@ -434,6 +446,46 @@ account seeded while the shipped default was active kept accepting that publishe
 default afterwards — the startup guard inspects the *setting*, but the stored *hash*
 is what authenticates.
 
+### Self-registration
+
+Visitors can also create their own account from the header menu instead of sharing
+the demo logins. "Create account" takes an email, an optional display name, and a
+password typed twice; the account is then granted `REGISTRATION_ROLE` (`planner` by
+default) and can upload and query its own factory data.
+
+The password rule is **length, not composition**: 10–200 characters, no required
+symbol or digit. Composition rules push people toward `Password1!` while banning
+long passphrases that are genuinely stronger.
+
+With `REGISTRATION_REQUIRE_VERIFICATION=true` (the default), a new account cannot
+sign in until its address is confirmed — login returns **403 `EMAIL_NOT_VERIFIED`**.
+The confirmation link opens `/verify?token=…` in the frontend, which calls
+`POST /api/auth/verify`. Verification is idempotent, so a link clicked twice still
+reports success rather than an error.
+
+Login accepts **either** the email or the username, and the email is matched
+case-insensitively. Sign-up is deliberately **enumeration-resistant**: registering
+an address that already exists returns the same `201` and the same message as a new
+one, so the form cannot be used to discover who holds an account.
+
+Two honest caveats:
+
+- **No SMTP configured means the link is returned in the API response** and shown
+  in the UI, labelled as such. That keeps the flow usable on a fresh clone, but it
+  also means anyone who submits an address is handed its confirmation link — which
+  defeats verification. Configure `SMTP_HOST` for any real deployment, or turn
+  verification off and accept unverified sign-ups knowingly.
+- **This is a shared workspace, not multi-tenancy.** A dataset uploaded by one
+  account is visible to every other account on the deployment. The UI says so on
+  the sign-up form. Do not raise `REGISTRATION_ROLE` past what you would hand to
+  any visitor who can reach that form.
+
+Session tokens carry a `kind` field and verification tokens are minted with
+`kind: "verify"`, which `get_current_user` rejects. Without that separation an
+emailed confirmation link would also work as a `Bearer` credential — the link is
+the weaker secret of the two, since it travels through mail servers and browser
+history.
+
 ---
 
 ## Deployment: Render and Vercel
@@ -499,15 +551,20 @@ you skip this, the app seeds itself on first boot as a background task instead.
 
 1. Dashboard → **New → Blueprint** → select the repository
 2. Render reads `render.yaml` and declares one web service, `predictops-api`
-3. Enter the three dashboard-only variables:
+3. Enter the dashboard-only variables:
 
 | Variable | Value |
 |---|---|
 | `DATABASE_URL` | your Supabase session-pooler URL |
 | `DEMO_PASSWORD` | your choice — judges sign in with it |
 | `GEMINI_API_KEY` | your Gemini key |
+| `FRONTEND_BASE_URL` | your Vercel origin, so confirmation links resolve |
+| `SMTP_HOST` / `SMTP_USERNAME` / `SMTP_PASSWORD` | optional — without them confirmation links are returned in the response instead of emailed |
 
-4. Edit `CORS_ALLOWED_ORIGINS` in `render.yaml` to your real Vercel origin
+4. Edit `CORS_ALLOWED_ORIGINS` in `render.yaml` to your real Vercel origin —
+   **no trailing slash.** A browser `Origin` header never carries one, so
+   `https://x.vercel.app/` matches nothing and every request fails preflight.
+   (The config now strips one defensively, but the value should still be exact.)
 
 Everything else is pinned: `ENVIRONMENT=production`, `AUTH_ENABLED=true`,
 `DEMO_MODE=false`, `TRUSTED_PROXY_HOPS=1`, `LLM_PROVIDER=gemini`, and `SECRET_KEY`
@@ -568,7 +625,7 @@ cd backend
 python -m pytest -q
 ```
 
-**338 tests.** The suite forces `LLM_PROVIDER=none`, so it never calls a language
+**372 tests.** The suite forces `LLM_PROVIDER=none`, so it never calls a language
 model: real Cortex and Gemini requests made tests slow (measured 70–127 s),
 non-deterministic, and able to fail because a quota was exhausted rather than because
 the code was wrong. Tests that exercise the LLM path stub the provider and assert on
@@ -634,6 +691,10 @@ Stated plainly, because a judge will find these anyway.
 - **Auth ships disabled** (`AUTH_ENABLED=false`) so the local demo runs open. The full
   stack is implemented, tested and wired into the UI; deployments set it to `true`,
   and `ENVIRONMENT=production` refuses to boot without it.
+- **Registration is a shared workspace.** Every account sees every uploaded dataset;
+  there is no per-tenant isolation. With no SMTP configured, confirmation links are
+  returned in the API response rather than emailed, which makes verification
+  advisory rather than enforcing.
 - **Cortex is local-only.** Deployed instances run on Gemini and its daily cap, then
   the deterministic template.
 

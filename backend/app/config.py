@@ -82,6 +82,31 @@ class Settings(BaseSettings):
     # `app.security.client_key`.
     trusted_proxy_hops: int = 0
 
+    # ─── Self-registration ────────────────────────────────────────────────────
+    # Whether anyone who can reach the API may create an account. Open signup on a
+    # public URL means a stranger can register; combined with the shared workspace
+    # that grants them the role below over the same fleet everyone else sees.
+    registration_enabled: bool = True
+    # Role granted to a self-registered account.
+    registration_role: str = "planner"
+    # Whether a new account must click its verification link before it can sign in.
+    registration_require_verification: bool = True
+    # Base URL the verification link points at — the FRONTEND, not the API, because
+    # the link is opened by a person in a browser. Blank falls back to the first
+    # CORS-allowed origin, which is the deployed frontend in practice.
+    frontend_base_url: str = ""
+
+    # ─── Outbound email (verification links) ──────────────────────────────────
+    # Standard-library smtplib; no new dependency. With SMTP_HOST blank, nothing is
+    # sent and the verification link is returned in the API response instead, so the
+    # flow stays usable in development without pretending an email was delivered.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = True
+
     model_config = {"env_file": ".env", "extra": "ignore", "protected_namespaces": ("settings_",)}
 
     @property

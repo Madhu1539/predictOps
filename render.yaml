@@ -96,5 +96,40 @@ services:
       - key: CORS_ALLOWED_ORIGINS
         value: https://predict-ops-six.vercel.app
 
+      # ─── Self-registration ───────────────────────────────────────────────
+      # Visitors create their own account instead of sharing the demo logins.
+      # The granted role can upload datasets, and uploaded datasets are visible
+      # to EVERY account on this deployment — a shared workspace, not per-tenant
+      # isolation. Do not raise this past what you would hand to any visitor who
+      # can reach the sign-up form.
+      - key: REGISTRATION_ENABLED
+        value: "true"
+      - key: REGISTRATION_ROLE
+        value: planner
+      - key: REGISTRATION_REQUIRE_VERIFICATION
+        value: "true"
+
+      # Confirmation links point at the FRONTEND (the /verify page, which then
+      # calls the API), not at this service. Set explicitly rather than relying
+      # on the CORS_ALLOWED_ORIGINS fallback, so adding a preview origin above
+      # cannot change where links are sent.
+      - key: FRONTEND_BASE_URL
+        value: https://predict-ops-six.vercel.app
+
+      # Optional, dashboard only. With SMTP_HOST unset the confirmation link is
+      # returned in the registration response and displayed in the UI instead of
+      # being emailed. That keeps sign-up usable, but it hands the link to
+      # whoever submitted the address — so verification stops proving ownership.
+      # Configure these, or set REGISTRATION_REQUIRE_VERIFICATION=false and
+      # accept unverified sign-ups knowingly.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+
       - key: PYTHON_VERSION
         value: "3.13.1"

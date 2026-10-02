@@ -507,5 +507,24 @@ export interface LoginResponse {
   role: string;
   full_name?: string | null;
   permissions: string[];
+  email?: string | null;
+}
+
+export interface RegisterResponse {
+  email: string;
+  role: string;
+  verification_required: boolean;
+  /** True only when a message was actually handed to an SMTP server. */
+  email_sent: boolean;
+  /** Present only when email delivery is unavailable, so the flow stays
+   *  completable. Never populated once SMTP is configured. */
+  verification_link?: string | null;
+  message: string;
+}
+
+export interface VerifyResponse {
+  verified: boolean;
+  email?: string | null;
+  message: string;
 }
 

@@ -299,8 +299,42 @@ class MachineCreate(BaseModel):
 # ─── Auth Schemas ─────────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=64)
+    # Accepts an email address as well as a seeded operator username, so the length
+    # allows a full address rather than the old 64-character username bound.
+    username: str = Field(..., min_length=1, max_length=254)
     password: str = Field(..., min_length=1, max_length=200)
+
+
+class RegisterRequest(BaseModel):
+    """Self-registration. Password rules live in `auth_service.validate_password`
+    rather than in Field constraints, so the API can return a sentence explaining
+    what is wrong instead of a schema error."""
+    email: str = Field(..., min_length=3, max_length=254)
+    password: str = Field(..., min_length=1, max_length=200)
+    full_name: Optional[str] = Field(default=None, max_length=120)
+
+
+class RegisterResponse(BaseModel):
+    email: str
+    role: str
+    verification_required: bool
+    # True only when a message was actually handed to an SMTP server.
+    email_sent: bool = False
+    # Present only when SMTP is not configured, so the flow remains completable in
+    # development. Never populated once email is working, because a link in an API
+    # response is readable by anyone who can see that response.
+    verification_link: Optional[str] = None
+    message: str
+
+
+class VerifyResponse(BaseModel):
+    verified: bool
+    email: Optional[str] = None
+    message: str
+
+
+class VerifyRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=1024)
 
 
 class LoginResponse(BaseModel):
@@ -309,6 +343,7 @@ class LoginResponse(BaseModel):
     role: str
     full_name: Optional[str] = None
     permissions: List[str] = []
+    email: Optional[str] = None
 
 
 class CurrentUserOut(BaseModel):

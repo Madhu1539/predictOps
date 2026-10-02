@@ -4,7 +4,8 @@ import type {
   Impact, InvestigateResponse, InvestigateSuggestions,
   IngestStatus, CostCenter, Material, ProductionOrder,
   OeeLosses, ModelInfo, MachineErpContext, CurrentUser, LoginResponse,
-  Dataset, ColumnMappingPreview, UploadResult, QualityReport, AnalysisReport
+  Dataset, ColumnMappingPreview, UploadResult, QualityReport, AnalysisReport,
+  RegisterResponse, VerifyResponse
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL
@@ -36,6 +37,36 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/** A rejected request, carrying the server's own `detail` so a caller can branch
+ *  on a specific code instead of matching on prose. */
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+  constructor(status: number, detail: string, message?: string) {
+    super(message ?? detail);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/** FastAPI returns `{"detail": ...}`. Pulled out so validation messages reach the
+ *  user as the sentence the backend wrote, rather than as `API 400: {"detail":...}`. */
+function extractDetail(body: string): string {
+  try {
+    const parsed = JSON.parse(body);
+    if (typeof parsed?.detail === 'string') return parsed.detail;
+    if (Array.isArray(parsed?.detail)) {
+      // Pydantic validation errors arrive as a list of objects.
+      const first = parsed.detail[0];
+      if (first?.msg) return String(first.msg);
+    }
+  } catch {
+    /* not JSON; fall through to the raw body */
+  }
+  return body;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   // Spread options first so caller-supplied headers merge with the defaults
   // instead of replacing them.
@@ -51,13 +82,31 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text();
+    const detail = extractDetail(body);
     if (res.status === 401) {
       // A stale or absent token: drop it so the UI stops sending it.
       setToken(null);
       throw new UnauthorizedError('Sign in to perform this action.');
     }
-    if (res.status === 403) throw new Error('Your role does not permit this action.');
-    throw new Error(`API ${res.status}: ${body}`);
+    if (res.status === 403) {
+      // 403 is also how an unconfirmed account is refused at login, so the role
+      // message must not swallow it.
+      if (detail === 'EMAIL_NOT_VERIFIED') {
+        throw new ApiError(
+          403,
+          detail,
+          'Confirm your email address first — check your inbox for the link.',
+        );
+      }
+      if (detail === 'REGISTRATION_DISABLED') {
+        throw new ApiError(403, detail, 'New accounts are not being accepted right now.');
+      }
+      throw new ApiError(403, detail, 'Your role does not permit this action.');
+    }
+    if (res.status === 429) {
+      throw new ApiError(429, detail, 'Too many attempts. Wait a moment and try again.');
+    }
+    throw new ApiError(res.status, detail, detail || `Request failed (${res.status})`);
   }
   return res.json() as Promise<T>;
 }
@@ -75,6 +124,24 @@ export const login = async (username: string, password: string): Promise<LoginRe
 export const logout = (): void => setToken(null);
 
 export const getCurrentUser = () => request<CurrentUser>('/api/auth/me');
+
+/** Create an account. Does NOT sign the user in: the address has to be confirmed
+ *  first, so there is no token to store yet. */
+export const register = (email: string, password: string, fullName?: string) =>
+  request<RegisterResponse>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      email,
+      password,
+      ...(fullName?.trim() ? { full_name: fullName.trim() } : {}),
+    }),
+  });
+
+export const verifyEmail = (token: string) =>
+  request<VerifyResponse>('/api/auth/verify', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
 
 // ─── Health ───────────────────────────────────────────────────────────────────
 export const getHealth = () => request<HealthStatus>('/api/health');
