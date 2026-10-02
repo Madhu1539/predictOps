@@ -10,6 +10,14 @@ single-channel case, [`docs/sample_vibration_only.csv`](sample_vibration_only.cs
 is the shape of a bearing run-to-failure dataset: one degrading bearing, one healthy,
 vibration only.
 
+[`docs/sample_factory_upload.csv`](sample_factory_upload.csv) is the larger one to
+reach for when you want to see the whole path work: four machines at 48 hourly
+readings each, so every rolling feature is populated rather than warned about. Its
+headers are deliberately a third party's (`Asset`, `Vibration_mm_s (RMS)`,
+`Bearing_Temp [C]`, `Shaft Speed [RPM]`), it carries a `Plant_Area` column nothing
+maps to, and `CONV-03` runs on a fixed-setpoint drive whose RPM never varies — which
+is reported as a warning, not the error a dead vibration channel would be.
+
 ---
 
 ## The guarantee that matters

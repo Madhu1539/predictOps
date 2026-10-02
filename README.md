@@ -367,6 +367,10 @@ curl 'localhost:8000/api/report/html?dataset_id=1' -o report.html
 Sample files: [`docs/sample_factory_data.csv`](docs/sample_factory_data.csv), and
 [`docs/sample_vibration_only.csv`](docs/sample_vibration_only.csv) for the
 single-channel case most real datasets resemble.
+[`docs/sample_factory_upload.csv`](docs/sample_factory_upload.csv) is the fuller
+one — four machines, 48 hourly readings each, third-party column names and a
+column nothing maps to — for exercising detection and the quality checks rather
+than just the happy path.
 
 There is **one pipeline**, not an upload mode bolted alongside a demo mode. Uploaded
 readings get the same feature engineering, the same model, the same scoring and the

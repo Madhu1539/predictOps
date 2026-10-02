@@ -17,12 +17,18 @@ backend/.secret_key
 # The database carries ingested plant data; the model is a pickle and must be
 # rebuilt from source rather than trusted from a repository.
 *.db
+*.db.bak
 *.db-journal
 *.db-wal
 *.db-shm
 *.sqlite
 *.sqlite3
 *.joblib
+
+# ─── Presentation material, kept local ───────────────────────────────────────
+# The demo script is speaking notes, not documentation: it carries the framing
+# and the candid caveats meant for the presenter rather than for readers.
+docs/DEMO_SCRIPT.md
 
 # ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
