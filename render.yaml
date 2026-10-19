@@ -107,21 +107,34 @@ services:
       - key: REGISTRATION_ROLE
         value: planner
 
-      # ⚠ READ THIS BEFORE DEPLOYING ⚠
+      # Shipped as "false" deliberately, and this is the one setting here worth
+      # understanding before you change it.
+      #
       # Startup REFUSES to boot in a non-development environment when this is
       # true and no SMTP host is configured, because with no mail transport the
       # confirmation link is returned in the registration response — so anyone
       # can confirm an address they do not own and verification proves nothing.
+      # SMTP_* below are `sync: false`, so a Blueprint deploy has no mail
+      # transport until someone sets them in the dashboard. Shipping "true"
+      # therefore shipped a default that could not start: the first deploy of
+      # this Blueprint failed with exactly that RuntimeError.
       #
-      # Pick one:
-      #   1. Set SMTP_HOST / SMTP_FROM / SMTP_USERNAME / SMTP_PASSWORD below
-      #      (dashboard) and leave this true. Verification actually works.
-      #   2. Set this to "false". Sign-up works with no email step, and you are
-      #      knowingly accepting unverified addresses.
-      #   3. Set REGISTRATION_ENABLED=false above. No public sign-up at all;
-      #      judges use the seeded planner / technician / viewer accounts.
+      # "false" means sign-up works with no email step and unverified addresses
+      # are accepted knowingly. Understand what that grants: REGISTRATION_ROLE
+      # is planner, a planner can upload datasets, and uploaded datasets are
+      # visible to EVERY account on this deployment. On a public URL that is an
+      # open write surface. It is an acceptable trade for a demo instance and a
+      # bad one for anything real.
+      #
+      # To tighten it, pick one:
+      #   1. Set SMTP_HOST / SMTP_FROM / SMTP_USERNAME / SMTP_PASSWORD in the
+      #      dashboard and flip this back to "true". Verification then works.
+      #   2. Set REGISTRATION_ENABLED=false above. No public sign-up at all;
+      #      visitors use the seeded planner / technician / viewer accounts,
+      #      which are created regardless of DEMO_MODE and authenticate with
+      #      DEMO_PASSWORD.
       - key: REGISTRATION_REQUIRE_VERIFICATION
-        value: "true"
+        value: "false"
 
       # Confirmation links point at the FRONTEND (the /verify page, which then
       # calls the API), not at this service. Set explicitly rather than relying

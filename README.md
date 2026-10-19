@@ -571,6 +571,9 @@ Two honest caveats:
   defeats verification. **Startup therefore refuses to boot** in a non-development
   environment with `REGISTRATION_REQUIRE_VERIFICATION=true` and no `SMTP_HOST`:
   configure SMTP, set verification to `false` knowingly, or disable registration.
+  `render.yaml` takes the second route and ships `false`, because `SMTP_*` are
+  dashboard-only there and shipping `true` shipped a Blueprint that could not
+  start. The deployed demo therefore accepts unverified sign-ups by choice.
 - **This is a shared workspace, not multi-tenancy.** A dataset uploaded by one
   account is visible to every other account on the deployment. The UI says so on
   the sign-up form. Do not raise `REGISTRATION_ROLE` past what you would hand to
