@@ -15,8 +15,8 @@ services:
     region: oregon
     healthCheckPath: /api/health
 
-    # The model is trained during the build, against a throwaway SQLite file
-    # rather than the live database. Three reasons:
+    # The model is trained during the build, against a local SQLite file rather
+    # than the live database. Three reasons:
     #   1. model.joblib is deliberately gitignored — a pickle must be rebuilt from
     #      source, not trusted from a repository.
     #   2. Build output becomes the running instance's filesystem on Render, so
@@ -24,25 +24,50 @@ services:
     #   3. It removes any dependency on the database being reachable at build
     #      time, and guarantees the training set is the documented synthetic
     #      distribution rather than whatever the live database happens to hold.
-    # Application data is seeded separately, into Postgres, on first boot.
+    #
+    # The SQLite file it builds is now KEPT rather than deleted, and is named to
+    # match the application's own default (`sqlite+aiosqlite:///./predictops.db`).
+    # That makes the no-DATABASE_URL case a complete deployment on its own: the
+    # instance boots with the full fleet and the trained model already in place,
+    # with no runtime seeding and no external database to go missing. When
+    # DATABASE_URL *is* set, this file is simply unused and application data is
+    # seeded into Postgres on first boot as before.
     buildCommand: |
       pip install --upgrade pip
       pip install -r backend/requirements.txt
       cd backend
-      DATABASE_URL=sqlite:///./build_train.db python ../data/generate_synthetic_data.py
-      DATABASE_URL=sqlite:///./build_train.db python -m app.ml.train
-      rm -f build_train.db
+      DATABASE_URL=sqlite:///./predictops.db python ../data/generate_synthetic_data.py
+      DATABASE_URL=sqlite:///./predictops.db python -m app.ml.train
 
     # Must bind 0.0.0.0 and Render's injected $PORT. The app's own defaults are
     # loopback:8000 on purpose, so they cannot be reused here.
     startCommand: cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
     envVars:
-      # Supabase connection string, set in the dashboard — never in the repo.
+      # OPTIONAL. Leave this UNSET for a self-contained demo: the application
+      # falls back to `sqlite+aiosqlite:///./predictops.db`, which the build step
+      # above has already created and seeded, so the service boots with the full
+      # fleet and needs no external database at all. Writes then do not survive a
+      # restart or redeploy, because Render's filesystem is ephemeral — for a
+      # demo instance that is a fair trade, and it means nothing can expire
+      # underneath you.
+      #
+      # Set it only if you want data to persist. A Supabase free project is the
+      # obvious choice but comes with a real expiry risk: it is paused after a
+      # period of inactivity and eventually removed, and once removed the pooler
+      # answers every connection with
+      #     asyncpg.exceptions.InternalServerError:
+      #     (ENOTFOUND) tenant/user postgres.<ref> not found
+      # which reads like a credentials problem and is not one — the project is
+      # gone. That is exactly how this service failed on 2026-10-19. If you see
+      # that error, check the project still exists before touching the password.
       #
       # Use the SESSION POOLER string (port 5432 on *.pooler.supabase.com), which
       # is what Supabase labels "Session pooler":
       #   postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+      #
+      # The region in that hostname must be the project's own region; hitting the
+      # pooler in the wrong region reports the same "tenant not found".
       #
       # Not the other two:
       #   - "Direct connection" (db.<ref>.supabase.co) resolves to IPv6 only on
